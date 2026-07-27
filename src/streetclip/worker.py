@@ -12,10 +12,11 @@ import threading
 import traceback
 from pathlib import Path
 
+from streetclip import workspaces
 from streetclip.config import Settings, get_settings
 from streetclip.db import Database, JobKind, JobStatus
 from streetclip.models import Candidate, Category, Report
-from streetclip.pipeline import run
+from streetclip.pipeline import ingest, run
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ class Worker:
         return True
 
     def job_dir(self, job_id: int) -> Path:
-        return self.data_dir / f"job_{job_id:05d}"
+        return workspaces.job_dir(self.data_dir, job_id)
 
     def _analyze(self, job: dict) -> None:
         job_id = job["id"]
@@ -106,7 +107,26 @@ class Worker:
         )
 
         self.db.replace_clips(job_id, report.candidates)
+
+        poster = None
+        try:
+            # A tenth of the way in, so the frame is not a black lead-in.
+            ingest.poster_frame(
+                Path(job["source_path"]),
+                workspaces.poster_path(self.data_dir, job_id),
+                at=min(10.0, report.media.duration / 10),
+                settings=self.settings,
+            )
+            poster = str(workspaces.poster_path(self.data_dir, job_id))
+        except Exception:
+            # A missing thumbnail is a cosmetic loss, not a failed analysis.
+            log.warning("could not write a poster for job %s", job_id, exc_info=True)
+
+        self.db.set_media(job_id, report.media.duration, poster)
         self.db.finish_job(job_id, report.model_dump_json())
+
+        freed = workspaces.purge_intermediates(self.data_dir, job_id)
+        log.info("job %s freed %.0f MB of intermediates", job_id, freed / 1e6)
 
     def _render(self, job: dict) -> None:
         """Render the clips the operator selected on the analysis job.

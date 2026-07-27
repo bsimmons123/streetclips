@@ -265,6 +265,71 @@ def test_analyze_job_reports_progress_as_it_goes(
     assert seen[-1] == 1.0
 
 
+@needs_ffmpeg
+def test_analyze_purges_intermediate_audio(
+    db: Database, tmp_path: Path, sample_video: Path, monkeypatch
+):
+    from streetclip.pipeline.transcribe.base import FakeTranscriber
+
+    monkeypatch.setattr(
+        "streetclip.pipeline.run.get_transcriber", lambda s: FakeTranscriber(_transcript())
+    )
+    monkeypatch.setattr("streetclip.pipeline.score.Scorer", lambda *a, **k: _StubScorer())
+
+    job_id = db.create_job(JobKind.ANALYZE, sample_video, sample_video.name)
+    data_dir = tmp_path / "data"
+    Worker(db, data_dir, settings=_settings()).run_once()
+
+    assert db.get_job(job_id)["status"] == JobStatus.DONE
+    assert not (data_dir / "job_00001" / "work" / "audio.wav").exists()
+
+
+@needs_ffmpeg
+def test_analyze_records_duration_and_poster(
+    db: Database, tmp_path: Path, sample_video: Path, monkeypatch
+):
+    from streetclip.pipeline.transcribe.base import FakeTranscriber
+
+    monkeypatch.setattr(
+        "streetclip.pipeline.run.get_transcriber", lambda s: FakeTranscriber(_transcript())
+    )
+    monkeypatch.setattr("streetclip.pipeline.score.Scorer", lambda *a, **k: _StubScorer())
+
+    job_id = db.create_job(JobKind.ANALYZE, sample_video, sample_video.name)
+    Worker(db, tmp_path / "data", settings=_settings()).run_once()
+
+    job = db.get_job(job_id)
+    assert job["duration"] > 0
+    assert Path(job["poster_path"]).is_file()
+
+
+@needs_ffmpeg
+def test_render_still_works_after_the_purge(
+    db: Database, tmp_path: Path, sample_video: Path, monkeypatch
+):
+    """Exports must survive cleanup — this is what makes the purge safe."""
+    from streetclip.pipeline.transcribe.base import FakeTranscriber
+
+    monkeypatch.setattr(
+        "streetclip.pipeline.run.get_transcriber", lambda s: FakeTranscriber(_transcript())
+    )
+    monkeypatch.setattr("streetclip.pipeline.score.Scorer", lambda *a, **k: _StubScorer())
+
+    worker = Worker(db, tmp_path / "data", settings=_settings())
+    analyze_id = db.create_job(JobKind.ANALYZE, sample_video, sample_video.name)
+    worker.run_once()
+
+    clips = db.list_clips(analyze_id)
+    assert clips, "the stub scorer must produce at least one clip"
+    db.update_clip(clips[0]["id"], None, None, True)
+
+    enqueue_render(db, analyze_id)
+    worker.run_once()
+
+    rendered = db.list_clips(analyze_id)[0]["rendered_path"]
+    assert rendered and Path(rendered).is_file()
+
+
 # --- threading ---------------------------------------------------------------
 
 
