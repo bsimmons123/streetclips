@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     progress      REAL NOT NULL DEFAULT 0.0,
     error         TEXT,
     report_json   TEXT,
+    title         TEXT,
+    duration      REAL NOT NULL DEFAULT 0.0,
+    poster_path   TEXT,
     created_at    REAL NOT NULL,
     updated_at    REAL NOT NULL
 );
@@ -97,9 +100,21 @@ class Database:
         finally:
             conn.close()
 
+    # Columns added after the first release. CREATE TABLE IF NOT EXISTS will not
+    # add them to a database that already exists, so they are applied by ALTER.
+    ADDED_COLUMNS = (
+        ("title", "TEXT"),
+        ("duration", "REAL NOT NULL DEFAULT 0.0"),
+        ("poster_path", "TEXT"),
+    )
+
     def migrate(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            existing = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+            for name, decl in self.ADDED_COLUMNS:
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {decl}")
 
     # --- jobs ----------------------------------------------------------------
 
@@ -170,6 +185,23 @@ class Database:
             conn.execute(
                 "UPDATE jobs SET status = ?, error = ?, updated_at = ? WHERE id = ?",
                 (JobStatus.FAILED.value, error[:2000], time.time(), job_id),
+            )
+
+    def rename_job(self, job_id: int, title: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE jobs SET title = ?, updated_at = ? WHERE id = ?",
+                (title.strip() or None, time.time(), job_id),
+            )
+        return self.get_job(job_id)
+
+    def set_media(self, job_id: int, duration: float, poster_path: str | None) -> None:
+        """Denormalize what the home list needs, so it never parses report_json."""
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE jobs SET duration = ?, poster_path = ?, updated_at = ?"
+                " WHERE id = ?",
+                (duration, poster_path, time.time(), job_id),
             )
 
     def requeue_running_jobs(self) -> int:

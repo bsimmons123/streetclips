@@ -246,3 +246,36 @@ def test_schema_migration_is_idempotent(tmp_path: Path):
     # Reopening must not wipe or fail on the existing schema.
     second = Database(path)
     assert second.get_job(job_id) is not None
+
+
+def test_new_columns_default_sensibly(db: Database):
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    job = db.get_job(job_id)
+    assert job["title"] is None
+    assert job["duration"] == 0.0
+    assert job["poster_path"] is None
+
+
+def test_rename_sets_title(db: Database):
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    row = db.rename_job(job_id, "Corner session")
+    assert row["title"] == "Corner session"
+    assert db.get_job(job_id)["title"] == "Corner session"
+
+
+def test_set_media_records_duration_and_poster(db: Database):
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.set_media(job_id, 3919.3, "/data/job_00001/poster.jpg")
+    job = db.get_job(job_id)
+    assert job["duration"] == 3919.3
+    assert job["poster_path"].endswith("poster.jpg")
+
+
+def test_migrate_is_idempotent_on_an_existing_database(tmp_path):
+    """Columns are added by ALTER, which errors if applied twice."""
+    path = tmp_path / "s.db"
+    Database(path).migrate()
+    Database(path).migrate()  # must not raise
+    db = Database(path)
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert db.get_job(job_id)["title"] is None
