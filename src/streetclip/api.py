@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from streetclip.config import Settings, get_settings
 from streetclip.db import Database, JobKind, JobStatus
@@ -52,7 +52,23 @@ def clip_payload(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def job_payload(row: dict[str, Any]) -> dict[str, Any]:
+class RenameRequest(BaseModel):
+    title: str = Field(min_length=1)
+
+    @field_validator("title")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("title must not be blank")
+        return value.strip()
+
+
+def workspace_payload(row: dict[str, Any]) -> dict[str, Any]:
+    """Shape for both the list and the detail view.
+
+    `report_json` is deliberately absent — it carries the whole transcript,
+    which runs to megabytes on a long recording.
+    """
     return {
         "id": row["id"],
         "kind": row["kind"],
@@ -61,7 +77,14 @@ def job_payload(row: dict[str, Any]) -> dict[str, Any]:
         "progress": row["progress"],
         "error": row["error"],
         "source_name": row["source_name"],
+        "title": row["title"] or row["source_name"],
+        "duration": row["duration"],
+        "has_poster": bool(row["poster_path"]),
         "created_at": row["created_at"],
+        # Only the list query carries tallies; the detail route has none.
+        "clip_count": row.get("clip_count", 0),
+        "kept_count": row.get("kept_count", 0),
+        "rendered_count": row.get("rendered_count", 0),
     }
 
 
@@ -108,13 +131,20 @@ def create_app(
         ]
         return {"dir": str(input_dir), "files": files}
 
-    # --- jobs ----------------------------------------------------------------
+    # --- workspaces ----------------------------------------------------------
 
-    @app.get("/api/jobs")
-    def list_jobs() -> list[dict[str, Any]]:
-        return [job_payload(j) for j in db.list_jobs()]
+    @app.get("/api/workspaces")
+    def list_workspaces() -> list[dict[str, Any]]:
+        """Analyze jobs with their clip tallies. Render jobs stay internal."""
+        return [workspace_payload(w) for w in db.list_workspaces()]
 
-    @app.post("/api/jobs", status_code=201)
+    @app.patch("/api/workspaces/{job_id}")
+    def rename_workspace(job_id: int, request: RenameRequest) -> dict[str, Any]:
+        if db.get_job(job_id) is None:
+            raise HTTPException(404, "no such workspace")
+        return workspace_payload(db.rename_job(job_id, request.title))
+
+    @app.post("/api/workspaces", status_code=201)
     def create_job(request: JobRequest) -> dict[str, Any]:
         """Analyze a file already on disk, picked from the input directory."""
         source = Path(request.path).expanduser()
@@ -126,9 +156,9 @@ def create_app(
             raise HTTPException(403, "path is outside the input directory")
 
         job_id = db.create_job(JobKind.ANALYZE, source.resolve(), source.name)
-        return job_payload(db.get_job(job_id))
+        return workspace_payload(db.get_job(job_id))
 
-    @app.post("/api/jobs/upload", status_code=201)
+    @app.post("/api/workspaces/upload", status_code=201)
     async def upload_job(file: UploadFile) -> dict[str, Any]:
         """Analyze an uploaded file."""
         name = Path(file.filename or "upload.mp4").name
@@ -142,21 +172,21 @@ def create_app(
                 handle.write(chunk)
 
         job_id = db.create_job(JobKind.ANALYZE, dest, name)
-        return job_payload(db.get_job(job_id))
+        return workspace_payload(db.get_job(job_id))
 
-    @app.get("/api/jobs/{job_id}")
+    @app.get("/api/workspaces/{job_id}")
     def get_job(job_id: int) -> dict[str, Any]:
         job = db.get_job(job_id)
         if job is None:
             raise HTTPException(404, "no such job")
 
-        payload = job_payload(job)
+        payload = workspace_payload(job)
         payload["clips"] = [clip_payload(c) for c in db.list_clips(job_id)]
         report = db.report_for(job_id)
         payload["media"] = report.get("media") if report else None
         return payload
 
-    @app.get("/api/jobs/{job_id}/events")
+    @app.get("/api/workspaces/{job_id}/events")
     async def job_events(job_id: int, request: Request) -> StreamingResponse:
         """Server-sent events carrying job progress until it settles."""
         if db.get_job(job_id) is None:
@@ -172,7 +202,7 @@ def create_app(
                 if job is None:
                     return
 
-                payload = json.dumps(job_payload(job))
+                payload = json.dumps(workspace_payload(job))
                 # Only send on change, so an idle job isn't a heartbeat firehose.
                 if payload != last:
                     last = payload
@@ -188,7 +218,7 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    @app.get("/api/jobs/{job_id}/source")
+    @app.get("/api/workspaces/{job_id}/source")
     def job_source(job_id: int, request: Request):
         """The original recording, seekable, for previewing candidate bounds."""
         job = db.get_job(job_id)
@@ -200,13 +230,13 @@ def create_app(
             raise HTTPException(404, "source file is gone")
         return ranged_file_response(source, request.headers.get("range", ""))
 
-    @app.post("/api/jobs/{job_id}/render", status_code=201)
+    @app.post("/api/workspaces/{job_id}/render", status_code=201)
     def render_job(job_id: int) -> dict[str, Any]:
         try:
             render_id = enqueue_render(db, job_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return job_payload(db.get_job(render_id))
+        return workspace_payload(db.get_job(render_id))
 
     # --- clips ---------------------------------------------------------------
 

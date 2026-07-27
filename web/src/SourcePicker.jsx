@@ -11,7 +11,7 @@ export default function SourcePicker({ onStarted, onError }) {
 
   useEffect(() => {
     api.listInputs().then(setInputs).catch(onError);
-    api.listJobs().then(setJobs).catch(onError);
+    api.listWorkspaces().then(setJobs).catch(onError);
   }, [onError]);
 
   async function start(work) {
@@ -29,7 +29,7 @@ export default function SourcePicker({ onStarted, onError }) {
     event.preventDefault();
     setOver(false);
     const file = event.dataTransfer.files[0];
-    if (file) start(api.uploadJob(file));
+    if (file) start(api.uploadWorkspace(file));
   }
 
   const analyzed = jobs.filter((job) => job.kind === "analyze");
@@ -51,7 +51,7 @@ export default function SourcePicker({ onStarted, onError }) {
                 key={file.path}
                 className="file-row"
                 disabled={busy}
-                onClick={() => start(api.createJob(file.path))}
+                onClick={() => start(api.createWorkspace(file.path))}
               >
                 <span className="name">{file.name}</span>
                 <span className="size">{bytes(file.size)}</span>
@@ -89,7 +89,7 @@ export default function SourcePicker({ onStarted, onError }) {
             disabled={busy}
             onChange={(event) => {
               const file = event.target.files[0];
-              if (file) start(api.uploadJob(file));
+              if (file) start(api.uploadWorkspace(file));
             }}
           />
           {busy ? "Uploading…" : "Drop a video here, or click to choose one"}

@@ -45,7 +45,7 @@ export default function App() {
 
   const refresh = useCallback(() => {
     if (jobId === null) return Promise.resolve();
-    return api.getJob(jobId).then(setJob).catch(fail);
+    return api.getWorkspace(jobId).then(setJob).catch(fail);
   }, [jobId, fail]);
 
   useEffect(() => {
@@ -60,7 +60,7 @@ export default function App() {
   useEffect(() => {
     if (jobId === null) return;
     refresh();
-    return api.watchJob(jobId, (update) => {
+    return api.watchWorkspace(jobId, (update) => {
       setJob((prev) => (prev ? { ...prev, ...update } : prev));
       if (update.status === "done") refresh();
     });
@@ -70,7 +70,7 @@ export default function App() {
   // have rendered paths worth refetching.
   useEffect(() => {
     if (renderId === null) return;
-    return api.watchJob(renderId, (update) => {
+    return api.watchWorkspace(renderId, (update) => {
       if (update.status === "done") {
         setRenderId(null);
         refresh();
@@ -99,7 +99,7 @@ export default function App() {
 
   function exportKept() {
     api
-      .renderJob(jobId)
+      .renderWorkspace(jobId)
       .then((render) => setRenderId(render.id))
       .catch(fail);
   }

@@ -172,7 +172,7 @@ export default function Review({ job, onPatchClip, onExport, exporting, onBack }
             <div className="player">
               <video
                 ref={video}
-                src={`/api/jobs/${job.id}/source`}
+                src={`/api/workspaces/${job.id}/source`}
                 preload="metadata"
                 onLoadedMetadata={seekToStart}
                 onTimeUpdate={onTimeUpdate}
