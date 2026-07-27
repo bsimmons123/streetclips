@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import * as api from "./api";
 import Review from "./Review";
 import SourcePicker from "./SourcePicker";
+import WorkspaceList from "./WorkspaceList";
 
 const STAGES = {
   probe: "reading the container",
@@ -40,6 +41,7 @@ export default function App() {
   const [job, setJob] = useState(null);
   const [renderId, setRenderId] = useState(null);
   const [error, setError] = useState(null);
+  const [picking, setPicking] = useState(false);
 
   const fail = useCallback((err) => setError(err.message || String(err)), []);
 
@@ -108,11 +110,28 @@ export default function App() {
     setJobId(null);
     setJob(null);
     setRenderId(null);
+    setPicking(false);
   }
 
   let body;
-  if (jobId === null || job === null) {
-    body = <SourcePicker onStarted={(created) => setJobId(created.id)} onError={fail} />;
+  if (jobId === null && picking) {
+    body = (
+      <SourcePicker
+        onStarted={(created) => {
+          setPicking(false);
+          setJobId(created.id);
+        }}
+        onError={fail}
+      />
+    );
+  } else if (jobId === null) {
+    body = <WorkspaceList onOpen={setJobId} onNew={() => setPicking(true)} onError={fail} />;
+  } else if (job === null) {
+    body = (
+      <div className="progress">
+        <p className="stage">loading…</p>
+      </div>
+    );
   } else if (job.status !== "done") {
     body = <Progress job={job} onBack={back} />;
   } else {
@@ -133,11 +152,11 @@ export default function App() {
         <span className="wordmark">
           street<span>clip</span>
         </span>
-        {job && <span className="source">{job.source_name}</span>}
+        {job && <span className="source">{job.title || job.source_name}</span>}
         <span className="spacer" />
-        {job && (
+        {(job || picking) && (
           <button className="btn ghost" onClick={back}>
-            Sources
+            Workspaces
           </button>
         )}
       </div>

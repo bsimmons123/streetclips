@@ -4,14 +4,12 @@ import { bytes } from "./format";
 
 export default function SourcePicker({ onStarted, onError }) {
   const [inputs, setInputs] = useState(null);
-  const [jobs, setJobs] = useState([]);
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
   const fileInput = useRef(null);
 
   useEffect(() => {
     api.listInputs().then(setInputs).catch(onError);
-    api.listWorkspaces().then(setJobs).catch(onError);
   }, [onError]);
 
   async function start(work) {
@@ -31,8 +29,6 @@ export default function SourcePicker({ onStarted, onError }) {
     const file = event.dataTransfer.files[0];
     if (file) start(api.uploadWorkspace(file));
   }
-
-  const analyzed = jobs.filter((job) => job.kind === "analyze");
 
   return (
     <div className="picker">
@@ -96,19 +92,6 @@ export default function SourcePicker({ onStarted, onError }) {
         </label>
       </div>
 
-      {analyzed.length > 0 && (
-        <div className="block">
-          <div className="section-label">Recent</div>
-          <div className="job-history">
-            {analyzed.slice(0, 8).map((job) => (
-              <button key={job.id} onClick={() => onStarted(job)}>
-                <span className="name">{job.source_name}</span>
-                <span className="size">{job.status}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

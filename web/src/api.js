@@ -33,6 +33,14 @@ export function uploadWorkspace(file) {
   return request("/api/workspaces/upload", { method: "POST", body: form });
 }
 
+export const getTranscript = (id) => request(`/api/workspaces/${id}/transcript`);
+
+/** Delete returns 204 with no body, so it can't go through request(). */
+export async function deleteWorkspace(id) {
+  const response = await fetch(`/api/workspaces/${id}`, { method: "DELETE" });
+  if (!response.ok) throw new Error("could not delete that workspace");
+}
+
 export const updateClip = (id, patch) =>
   request(`/api/clips/${id}`, { ...json(patch), method: "PATCH" });
 
