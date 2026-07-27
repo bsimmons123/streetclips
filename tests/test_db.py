@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -279,3 +281,60 @@ def test_migrate_is_idempotent_on_an_existing_database(tmp_path):
     db = Database(path)
     job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
     assert db.get_job(job_id)["title"] is None
+
+
+def _create_pre_migration_jobs_table(path: Path) -> int:
+    """Build a `jobs` table as it existed before title/duration/poster_path,
+    with one row already in it, and return that row's id.
+
+    This is the real shape of an operator's existing data/streetclip.db.
+    """
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE jobs (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind          TEXT NOT NULL,
+            status        TEXT NOT NULL,
+            source_path   TEXT NOT NULL,
+            source_name   TEXT NOT NULL,
+            stage         TEXT NOT NULL DEFAULT '',
+            progress      REAL NOT NULL DEFAULT 0.0,
+            error         TEXT,
+            report_json   TEXT,
+            created_at    REAL NOT NULL,
+            updated_at    REAL NOT NULL
+        )
+        """
+    )
+    now = time.time()
+    cursor = conn.execute(
+        "INSERT INTO jobs (kind, status, source_path, source_name, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (JobKind.ANALYZE.value, JobStatus.QUEUED.value, "/a.mp4", "a.mp4", now, now),
+    )
+    job_id = int(cursor.lastrowid)
+    conn.commit()
+    conn.close()
+    return job_id
+
+
+def test_migrate_adds_columns_to_a_genuinely_pre_migration_database(tmp_path: Path):
+    """The operator's real data/streetclip.db predates title/duration/poster_path
+    and already has rows in it. migrate() must ALTER it in place, twice without
+    raising, and the pre-existing row must survive with sensible defaults.
+    """
+    path = tmp_path / "existing.db"
+    job_id = _create_pre_migration_jobs_table(path)
+
+    db = Database(path)  # __init__ calls migrate()
+    db.migrate()  # calling it again must not raise
+
+    with db.connect() as conn:
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+    assert {"title", "duration", "poster_path"} <= columns
+
+    job = db.get_job(job_id)
+    assert job["title"] is None
+    assert job["duration"] == 0.0
+    assert job["poster_path"] is None
