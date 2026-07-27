@@ -140,6 +140,25 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def list_workspaces(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Analyze jobs with their clip tallies, newest first.
+
+        A LEFT JOIN aggregate rather than stored counters: the numbers change
+        on every keep and skip, and at this scale counting is free.
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT j.*,"
+                " COUNT(c.id) AS clip_count,"
+                " COALESCE(SUM(c.selected), 0) AS kept_count,"
+                " COUNT(c.rendered_path) AS rendered_count"
+                " FROM jobs j LEFT JOIN clips c ON c.job_id = j.id"
+                " WHERE j.kind = ?"
+                " GROUP BY j.id ORDER BY j.id DESC LIMIT ?",
+                (JobKind.ANALYZE.value, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def claim_next_job(self) -> dict[str, Any] | None:
         """Atomically take the oldest queued job.
 

@@ -31,6 +31,18 @@ def _candidates(n: int = 3) -> list[Candidate]:
     ]
 
 
+def _candidate(start, end, score=8.0):
+    return Candidate(
+        start=start,
+        end=end,
+        score=score,
+        category=Category.ONE_LINER,
+        hook_title="t",
+        reason="r",
+        excerpt="e",
+    )
+
+
 # --- jobs --------------------------------------------------------------------
 
 
@@ -338,3 +350,32 @@ def test_migrate_adds_columns_to_a_genuinely_pre_migration_database(tmp_path: Pa
     assert job["title"] is None
     assert job["duration"] == 0.0
     assert job["poster_path"] is None
+
+
+# --- list_workspaces ----------------------------------------------------------
+
+
+def test_list_workspaces_counts_clips_by_state(db: Database):
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.replace_clips(job_id, [_candidate(0, 30), _candidate(60, 90), _candidate(120, 150)])
+    clips = db.list_clips(job_id)
+    db.update_clip(clips[0]["id"], None, None, True)
+    db.update_clip(clips[1]["id"], None, None, True)
+    db.set_rendered_path(clips[0]["id"], Path("/out/a.mp4"))
+
+    rows = db.list_workspaces()
+    assert len(rows) == 1
+    assert rows[0]["clip_count"] == 3
+    assert rows[0]["kept_count"] == 2
+    assert rows[0]["rendered_count"] == 1
+
+
+def test_list_workspaces_excludes_render_jobs(db: Database):
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.create_job(JobKind.RENDER, Path("1"), "a.mp4")
+    assert [r["kind"] for r in db.list_workspaces()] == ["analyze"]
+
+
+def test_list_workspaces_counts_zero_for_a_fresh_job(db: Database):
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert db.list_workspaces()[0]["clip_count"] == 0
