@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     caption_words_per_group: int = 4
     caption_max_gap: float = 0.8
 
+    # Render toggles. Captions need an ffmpeg built with libass; turn them off
+    # if yours lacks it rather than having every export fail.
+    render_captions: bool = True
+    render_track_speaker: bool = True
+
     # Reframe. Sampling at 2fps is enough to track a person who is standing and
     # gesturing; higher just costs decode time.
     reframe_sample_fps: float = 2.0
