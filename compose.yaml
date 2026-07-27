@@ -11,6 +11,8 @@ services:
       - "${STREETCLIP_BIND:-8080}:8080"
     environment:
       STREETCLIP_TRANSCRIBE_BACKEND: ${STREETCLIP_TRANSCRIBE_BACKEND:-groq}
+      # Keys come from ./.env, which is gitignored. Never inline them here —
+      # this file is tracked.
       STREETCLIP_GROQ_API_KEY: ${STREETCLIP_GROQ_API_KEY:-}
       STREETCLIP_ANTHROPIC_API_KEY: ${STREETCLIP_ANTHROPIC_API_KEY:-}
       STREETCLIP_LOCAL_WHISPER_MODEL: ${STREETCLIP_LOCAL_WHISPER_MODEL:-small.en}

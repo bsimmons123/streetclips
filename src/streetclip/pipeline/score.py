@@ -86,13 +86,17 @@ class Scorer:
             import anthropic
 
             self._client = anthropic.Anthropic(
-                api_key=self.settings.anthropic_api_key or None
+                api_key=self.settings.anthropic_api_key or None,
+                timeout=self.settings.scoring_timeout_seconds,
             )
 
     def propose(self, chunk: Chunk) -> list[Proposal]:
-        response = self._client.messages.create(
+        # Streamed rather than a plain create(): reading a 15-minute transcript
+        # at high effort routinely runs past the SDK's 10-minute request
+        # timeout, and a non-streaming call has no keepalive to survive it.
+        with self._client.messages.stream(
             model=self.settings.scoring_model,
-            max_tokens=16000,
+            max_tokens=self.settings.scoring_max_tokens,
             system=SYSTEM_PROMPT,
             output_config={
                 "effort": self.settings.scoring_effort,
@@ -107,7 +111,8 @@ class Scorer:
                     ),
                 }
             ],
-        )
+        ) as stream:
+            response = stream.get_final_message()
         return _parse(response, chunk)
 
 

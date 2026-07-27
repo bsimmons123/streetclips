@@ -131,3 +131,30 @@ def test_split_audio_offsets_match_chunk_order(sample_video: Path, tmp_path: Pat
     chunks = ingest.split_audio(audio, tmp_path / "chunks", chunk_seconds=4.0)
     assert [offset for _, offset in chunks] == [0.0, 4.0, 8.0]
     assert all(path.exists() for path, _ in chunks)
+
+
+@needs_ffmpeg
+def test_split_audio_chunks_report_their_own_duration(sample_video: Path, tmp_path: Path):
+    """Every chunk's header must describe that chunk, not the whole recording.
+
+    ffmpeg's segment muxer stamps the source's total sample count into the last
+    segment's FLAC header. A hosted transcriber then waits for audio that never
+    arrives and the request dies on a read timeout.
+    """
+    audio = ingest.extract_audio(sample_video, tmp_path / "a.wav")
+    total = ingest.audio_duration(audio)
+    chunks = ingest.split_audio(audio, tmp_path / "chunks", chunk_seconds=4.0)
+
+    # The final chunk is the one the segment muxer got wrong.
+    last_path, last_offset = chunks[-1]
+    assert ingest.audio_duration(last_path) < total
+    assert ingest.audio_duration(last_path) == pytest.approx(total - last_offset, abs=0.2)
+
+
+@needs_ffmpeg
+def test_split_audio_chunk_durations_sum_to_the_source(sample_video: Path, tmp_path: Path):
+    """No audio may be dropped or duplicated across the seams."""
+    audio = ingest.extract_audio(sample_video, tmp_path / "a.wav")
+    chunks = ingest.split_audio(audio, tmp_path / "chunks", chunk_seconds=4.0)
+    covered = sum(ingest.audio_duration(p) for p, _ in chunks)
+    assert covered == pytest.approx(ingest.audio_duration(audio), abs=0.2)

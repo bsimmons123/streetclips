@@ -198,15 +198,31 @@ def test_to_candidates_of_empty_list():
 # --- scorer wiring -----------------------------------------------------------
 
 
+class _StubStream:
+    """Stands in for the SDK's streaming context manager."""
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get_final_message(self):
+        return _response(self.payload)
+
+
 class _StubClient:
     def __init__(self, payload):
         self.payload = payload
         self.kwargs = None
         self.messages = self
 
-    def create(self, **kwargs):
+    def stream(self, **kwargs):
         self.kwargs = kwargs
-        return _response(self.payload)
+        return _StubStream(self.payload)
 
 
 def test_scorer_sends_chunk_text_and_parses_result():
@@ -218,3 +234,10 @@ def test_scorer_sends_chunk_text_and_parses_result():
     assert stub.kwargs["model"] == "claude-opus-5"
     # Structured output keeps us from having to scrape prose for JSON.
     assert stub.kwargs["output_config"]["format"]["type"] == "json_schema"
+
+
+def test_scorer_streams_rather_than_blocking_on_one_response():
+    """A high-effort pass over a long chunk outruns the SDK request timeout."""
+    stub = _StubClient({"moments": [_moment()]})
+    score.Scorer(Settings(), client=stub).propose(_chunk())
+    assert stub.kwargs["max_tokens"] == Settings().scoring_max_tokens

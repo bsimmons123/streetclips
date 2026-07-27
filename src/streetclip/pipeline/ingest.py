@@ -108,31 +108,63 @@ def split_audio(
     (a 2h 16kHz mono WAV is ~230MB), so long inputs must be sent in pieces and
     the returned timestamps shifted back by each piece's offset. FLAC keeps the
     audio lossless while cutting size enough to stay under the cap.
+
+    Each chunk is cut with its own ffmpeg run rather than the segment muxer.
+    The muxer stamps the *source's* total sample count into the final segment's
+    FLAC header, so that last piece claims the whole recording's duration —
+    hosted transcription then blocks waiting for audio that never arrives, and
+    the request dies on a read timeout.
     """
     settings = settings or get_settings()
     dest_dir.mkdir(parents=True, exist_ok=True)
-    pattern = dest_dir / "chunk_%05d.flac"
 
-    run_ffmpeg(
-        [
-            settings.ffmpeg_bin,
-            "-v", "error",
-            "-y",
-            "-i", str(audio),
-            "-f", "segment",
-            "-segment_time", f"{chunk_seconds:.3f}",
-            # Force segments to start exactly on the requested interval so the
-            # offset we compute below is the true offset.
-            "-reset_timestamps", "1",
-            "-c:a", "flac",
-            str(pattern),
-        ]
-    )
+    total = audio_duration(audio, settings)
+    chunks: list[tuple[Path, float]] = []
+    offset = 0.0
+    index = 0
 
-    chunks = sorted(dest_dir.glob("chunk_*.flac"))
+    while offset < total:
+        dest = dest_dir / f"chunk_{index:05d}.flac"
+        run_ffmpeg(
+            [
+                settings.ffmpeg_bin,
+                "-v", "error",
+                "-y",
+                # Seeking before -i is exact on PCM and avoids decoding the
+                # leading audio for every chunk.
+                "-ss", f"{offset:.3f}",
+                "-t", f"{chunk_seconds:.3f}",
+                "-i", str(audio),
+                "-c:a", "flac",
+                str(dest),
+            ]
+        )
+        if dest.exists() and dest.stat().st_size > 0:
+            chunks.append((dest, offset))
+        offset += chunk_seconds
+        index += 1
+
     if not chunks:
         raise FFmpegError(f"splitting {audio} produced no chunks")
-    return [(p, i * chunk_seconds) for i, p in enumerate(chunks)]
+    return chunks
+
+
+def audio_duration(path: Path, settings: Settings | None = None) -> float:
+    """Container duration of an audio-only file, which `probe` won't accept."""
+    settings = settings or get_settings()
+    raw = run_ffmpeg(
+        [
+            settings.ffprobe_bin,
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-print_format", "json",
+            str(path),
+        ]
+    )
+    duration = float(json.loads(raw).get("format", {}).get("duration") or 0.0)
+    if duration <= 0:
+        raise FFmpegError(f"could not determine duration of {path}")
+    return duration
 
 
 def cut(

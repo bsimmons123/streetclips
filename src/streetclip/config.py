@@ -32,7 +32,13 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     scoring_model: str = "claude-opus-5"
+    # Thinking is on by default on Opus 5 and counts against max_tokens, so the
+    # budget has to cover reasoning as well as the JSON that comes out.
     scoring_effort: str = "high"
+    scoring_max_tokens: int = 32000
+    # Ceiling for one scoring call. The SDK default is 10 minutes, which a
+    # high-effort pass over a long chunk can exceed.
+    scoring_timeout_seconds: float = 1800.0
 
     # Chunking. 15 min of speech is well under context limits; the overlap
     # stops a good moment from being cut in half at a chunk seam.
