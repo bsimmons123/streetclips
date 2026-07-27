@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     reframe_deadzone: float = 0.02
     reframe_min_detection_ratio: float = 0.25
 
+    # Web service. `input_dir` is the mounted folder the operator picks from;
+    # nothing outside it can be submitted by path.
+    host: str = "0.0.0.0"
+    port: int = 8080
+    data_dir: str = "./data"
+    input_dir: str = "./input"
+
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
 
