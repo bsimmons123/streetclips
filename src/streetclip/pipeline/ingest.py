@@ -96,6 +96,52 @@ def extract_audio(path: Path, dest: Path, settings: Settings | None = None) -> P
     return dest
 
 
+POSTER_WIDTH = 480
+
+
+def poster_frame(
+    source: Path,
+    dest: Path,
+    at: float,
+    settings: Settings | None = None,
+) -> Path:
+    """Grab one downscaled frame, for the workspace list.
+
+    Seeking past the end yields no usable frame, so an out-of-range `at`
+    falls back to the first frame rather than leaving an empty/missing file.
+    Some ffmpeg builds also raise (rather than just writing nothing) when the
+    seek lands past EOF, so a failed attempt is swallowed until the fallback
+    is exhausted too.
+    """
+    settings = settings or get_settings()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    last_error: FFmpegError | None = None
+    for seek in (max(0.0, at), 0.0):
+        try:
+            run_ffmpeg(
+                [
+                    settings.ffmpeg_bin,
+                    "-v", "error",
+                    "-y",
+                    "-ss", f"{seek:.3f}",
+                    "-i", str(source),
+                    "-frames:v", "1",
+                    "-vf", f"scale={POSTER_WIDTH}:-2",
+                    str(dest),
+                ]
+            )
+        except FFmpegError as exc:
+            last_error = exc
+            continue
+        if dest.is_file() and dest.stat().st_size > 0:
+            return dest
+
+    if last_error is not None:
+        raise last_error
+    raise FFmpegError(f"could not extract a poster frame from {source}")
+
+
 def split_audio(
     audio: Path,
     dest_dir: Path,

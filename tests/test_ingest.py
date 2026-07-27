@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import wave
 from pathlib import Path
 
 import pytest
 
+from streetclip.config import get_settings
 from streetclip.pipeline import ingest
 from streetclip.pipeline.ingest import FFmpegError
 
@@ -59,3 +61,31 @@ def test_extract_audio_is_16k_mono_pcm(sample_video: Path, tmp_path: Path):
 def test_cut_produces_requested_duration(sample_video: Path, tmp_path: Path):
     dest = ingest.cut(sample_video, tmp_path / "clip.mp4", start=2.0, end=5.0)
     assert 2.7 <= ingest.probe(dest).duration <= 3.3
+
+
+@needs_ffmpeg
+def test_poster_frame_writes_a_jpeg(sample_video: Path, tmp_path: Path):
+    dest = ingest.poster_frame(sample_video, tmp_path / "poster.jpg", at=1.0)
+    assert dest.is_file()
+    assert dest.stat().st_size > 0
+    assert dest.read_bytes()[:2] == b"\xff\xd8", "not a JPEG"
+
+
+@needs_ffmpeg
+def test_poster_frame_is_downscaled(sample_video: Path, tmp_path: Path):
+    """The home list shows thumbnails; full-resolution frames are wasted bytes."""
+    dest = ingest.poster_frame(sample_video, tmp_path / "poster.jpg", at=1.0)
+    info = json.loads(
+        ingest.run_ffmpeg([
+            get_settings().ffprobe_bin, "-v", "error", "-print_format", "json",
+            "-show_streams", str(dest),
+        ])
+    )
+    assert info["streams"][0]["width"] == 480
+
+
+@needs_ffmpeg
+def test_poster_frame_past_the_end_still_produces_a_file(sample_video: Path, tmp_path: Path):
+    """A seek beyond the recording must not leave a zero-byte poster."""
+    dest = ingest.poster_frame(sample_video, tmp_path / "poster.jpg", at=9999.0)
+    assert dest.is_file() and dest.stat().st_size > 0
