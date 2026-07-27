@@ -8,11 +8,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from streetclip import workspaces as workspaces_fs
 from streetclip.config import Settings, get_settings
 from streetclip.db import Database, JobKind, JobStatus
 from streetclip.ranged import ranged_file_response
@@ -143,6 +144,51 @@ def create_app(
         if db.get_job(job_id) is None:
             raise HTTPException(404, "no such workspace")
         return workspace_payload(db.rename_job(job_id, request.title))
+
+    @app.delete("/api/workspaces/{job_id}", status_code=204)
+    def delete_workspace(job_id: int) -> Response:
+        job = db.get_job(job_id)
+        if job is None:
+            raise HTTPException(404, "no such workspace")
+
+        source = Path(job["source_path"])
+        # Read the paths BEFORE deleting: source_is_shared counts this job's
+        # own row, so a count of one means nothing else needs the file.
+        shared = workspaces_fs.source_is_shared(source, db.all_source_paths())
+
+        db.delete_job(job_id)
+        workspaces_fs.delete_workspace(data_dir, job_id)
+
+        # Only uploads are ours to remove. Files in the input directory are the
+        # operator's own recordings.
+        if not shared and _within(source, data_dir / "uploads") and source.is_file():
+            source.unlink()
+        return Response(status_code=204)
+
+    @app.get("/api/workspaces/{job_id}/transcript")
+    def workspace_transcript(job_id: int) -> dict[str, Any]:
+        """Words and segments only — the report also carries every candidate."""
+        report = db.report_for(job_id)
+        if report is None:
+            raise HTTPException(404, "this workspace has no transcript yet")
+
+        transcript = report.get("transcript", {})
+        return {
+            "duration": transcript.get("duration", 0.0),
+            "words": transcript.get("words", []),
+            "segments": transcript.get("segments", []),
+        }
+
+    @app.get("/api/workspaces/{job_id}/poster")
+    def workspace_poster(job_id: int) -> FileResponse:
+        job = db.get_job(job_id)
+        if job is None or not job["poster_path"]:
+            raise HTTPException(404, "no poster")
+
+        path = Path(job["poster_path"])
+        if not path.is_file():
+            raise HTTPException(404, "poster file is gone")
+        return FileResponse(path, media_type="image/jpeg")
 
     @app.post("/api/workspaces", status_code=201)
     def create_job(request: JobRequest) -> dict[str, Any]:

@@ -206,6 +206,17 @@ class Database:
                 (JobStatus.FAILED.value, error[:2000], time.time(), job_id),
             )
 
+    def delete_job(self, job_id: int) -> None:
+        """Clips go too, via the schema's ON DELETE CASCADE."""
+        with self.connect() as conn:
+            conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+
+    def all_source_paths(self) -> list[str]:
+        """Every job's source, including the one a caller is about to delete."""
+        with self.connect() as conn:
+            rows = conn.execute("SELECT source_path FROM jobs").fetchall()
+        return [r["source_path"] for r in rows]
+
     def rename_job(self, job_id: int, title: str) -> dict[str, Any]:
         with self.connect() as conn:
             conn.execute(

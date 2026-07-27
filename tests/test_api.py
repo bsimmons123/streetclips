@@ -430,3 +430,104 @@ def test_list_workspaces_excludes_render_jobs(env):
     db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
     db.create_job(JobKind.RENDER, Path("1"), "a.mp4")
     assert len(client.get("/api/workspaces").json()) == 1
+
+
+# --- delete, transcript, poster ----------------------------------------------
+
+
+def test_delete_workspace_removes_rows_and_directory(env):
+    client, db, input_dir = env
+    data_dir = input_dir.parent / "data"
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    job_dir = data_dir / f"job_{job_id:05d}"
+    (job_dir / "shorts").mkdir(parents=True)
+    (job_dir / "shorts" / "01.mp4").write_bytes(b"video")
+
+    assert client.delete(f"/api/workspaces/{job_id}").status_code == 204
+    assert db.get_job(job_id) is None
+    assert not job_dir.exists()
+
+
+def test_delete_workspace_cascades_to_its_clips(env):
+    client, db, _ = env
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.replace_clips(job_id, [_candidate()])
+    assert db.list_clips(job_id)
+
+    client.delete(f"/api/workspaces/{job_id}")
+    assert db.list_clips(job_id) == []
+
+
+def test_delete_workspace_removes_its_upload(env):
+    client, db, input_dir = env
+    upload = input_dir.parent / "data" / "uploads" / "a.mp4"
+    upload.parent.mkdir(parents=True, exist_ok=True)
+    upload.write_bytes(b"video")
+    job_id = db.create_job(JobKind.ANALYZE, upload, "a.mp4")
+
+    client.delete(f"/api/workspaces/{job_id}")
+    assert not upload.exists()
+
+
+def test_delete_workspace_keeps_an_upload_another_job_uses(env):
+    """Two workspaces can point at the same uploaded file."""
+    client, db, input_dir = env
+    upload = input_dir.parent / "data" / "uploads" / "a.mp4"
+    upload.parent.mkdir(parents=True, exist_ok=True)
+    upload.write_bytes(b"video")
+    first = db.create_job(JobKind.ANALYZE, upload, "a.mp4")
+    db.create_job(JobKind.ANALYZE, upload, "a.mp4")
+
+    client.delete(f"/api/workspaces/{first}")
+    assert upload.exists(), "the second workspace still needs it"
+
+
+def test_delete_leaves_files_in_the_input_directory_alone(env):
+    """Originals the operator put there are not ours to remove."""
+    client, db, input_dir = env
+    original = input_dir / "a.mp4"
+    original.write_bytes(b"video")
+    job_id = db.create_job(JobKind.ANALYZE, original, "a.mp4")
+
+    client.delete(f"/api/workspaces/{job_id}")
+    assert original.exists()
+
+
+def test_delete_a_missing_workspace(env):
+    client, _, _ = env
+    assert client.delete("/api/workspaces/999").status_code == 404
+
+
+def test_transcript_returns_words_without_the_report(env, sample_video):
+    client, db, _ = env
+    job_id = _seed_done_job(db, sample_video)
+
+    body = client.get(f"/api/workspaces/{job_id}/transcript").json()
+    assert body["words"][0]["text"] == "a"
+    assert body["words"][0]["start"] == 0.0
+    assert "candidates" not in body and "media" not in body
+
+
+def test_transcript_404s_before_analysis_finishes(env):
+    client, db, _ = env
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert client.get(f"/api/workspaces/{job_id}/transcript").status_code == 404
+
+
+def test_poster_404s_when_absent(env):
+    client, db, _ = env
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert client.get(f"/api/workspaces/{job_id}/poster").status_code == 404
+
+
+def test_poster_is_served_when_present(env):
+    client, db, input_dir = env
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    poster = input_dir.parent / "data" / f"job_{job_id:05d}" / "poster.jpg"
+    poster.parent.mkdir(parents=True, exist_ok=True)
+    poster.write_bytes(b"\xff\xd8fake-jpeg")
+    db.set_media(job_id, 12.5, str(poster))
+
+    response = client.get(f"/api/workspaces/{job_id}/poster")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
