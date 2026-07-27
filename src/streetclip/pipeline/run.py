@@ -90,6 +90,74 @@ def cut_candidates(
     return written
 
 
+def render_shorts(
+    report: Report,
+    out_dir: Path,
+    work_dir: Path,
+    limit: int | None = None,
+    burn_captions: bool = True,
+    track_speaker: bool = True,
+    settings: Settings | None = None,
+    progress: ProgressFn = _noop,
+) -> list[Path]:
+    """Turn reviewed candidates into upload-ready 9:16 shorts.
+
+    Speaker tracking is per clip: each one gets its own crop path, because the
+    preacher moves between moments and a path derived from the whole recording
+    would be wrong for most of them.
+    """
+    from streetclip.pipeline.render import encode, reframe
+
+    settings = settings or get_settings()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    source = Path(report.media.path)
+
+    detector = None
+    if track_speaker:
+        try:
+            detector = reframe.MediaPipeDetector()
+        except ImportError:
+            # Rendering without tracking is a worse clip, not a failed run.
+            track_speaker = False
+
+    selected = report.candidates[:limit]
+    written: list[Path] = []
+
+    for i, candidate in enumerate(selected, start=1):
+        progress(f"rendering {i}/{len(selected)}", (i - 1) / max(1, len(selected)))
+
+        if track_speaker and detector is not None:
+            plan = reframe.plan_for_clip(
+                source,
+                candidate.start,
+                candidate.end,
+                report.media.width,
+                report.media.height,
+                detector=detector,
+                settings=settings,
+            )
+        else:
+            plan = reframe.plan([], report.media.width, report.media.height, settings)
+
+        name = f"{i:02d}_{candidate.category.value}_{_slug(candidate.hook_title)}.mp4"
+        written.append(
+            encode.render_candidate(
+                source,
+                out_dir / name,
+                candidate,
+                report.transcript,
+                plan,
+                work_dir,
+                burn_captions=burn_captions,
+                settings=settings,
+            )
+        )
+
+    progress("done", 1.0)
+    return written
+
+
 def _slug(text: str) -> str:
     cleaned = "".join(c if c.isalnum() or c.isspace() else " " for c in text.lower())
     return "-".join(cleaned.split())[:50] or "clip"

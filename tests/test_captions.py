@@ -106,7 +106,8 @@ def test_words_are_held_until_the_next_one_starts():
 def test_times_are_rebased_to_the_clip():
     words = _words([("a", 100.0, 100.5), ("b", 100.5, 101.0)])
     transcript = Transcript(duration=200.0, words=words)
-    lines = _dialogue_lines(captions.build(transcript, start=100.0, end=101.0, settings=_settings()))
+    ass = captions.build(transcript, start=100.0, end=101.0, settings=_settings())
+    lines = _dialogue_lines(ass)
     # The clip starts at zero even though the words live at 100s in the source.
     assert lines[0].startswith("Dialogue: 0,0:00:00.00,")
 

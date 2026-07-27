@@ -58,6 +58,27 @@ def _cut(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render(args: argparse.Namespace) -> int:
+    """Render finished 9:16 shorts from a report."""
+    report = run.load_report(Path(args.report).expanduser().resolve())
+    out_dir = Path(args.out).expanduser().resolve()
+
+    written = run.render_shorts(
+        report,
+        out_dir=out_dir,
+        work_dir=out_dir / "work",
+        limit=args.limit,
+        burn_captions=not args.no_captions,
+        track_speaker=not args.no_track,
+        progress=run._noop if args.quiet else _progress,
+    )
+
+    for path in written:
+        print(path)
+    print(f"\n{len(written)} shorts written to {out_dir}")
+    return 0 if written else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="streetclip",
@@ -85,6 +106,23 @@ def build_parser() -> argparse.ArgumentParser:
     cut.add_argument("-o", "--out", default="clips", help="output directory")
     cut.add_argument("-n", "--limit", type=int, help="only cut the top N candidates")
     cut.set_defaults(func=_cut)
+
+    render = sub.add_parser(
+        "render", help="render upload-ready 9:16 shorts with burned-in captions"
+    )
+    render.add_argument("report", help="path to report.json")
+    render.add_argument("-o", "--out", default="shorts", help="output directory")
+    render.add_argument("-n", "--limit", type=int, help="only render the top N candidates")
+    render.add_argument(
+        "--no-captions", action="store_true", help="skip burned-in captions"
+    )
+    render.add_argument(
+        "--no-track",
+        action="store_true",
+        help="use a fixed center crop instead of tracking the speaker",
+    )
+    render.add_argument("-q", "--quiet", action="store_true", help="suppress progress output")
+    render.set_defaults(func=_render)
 
     return parser
 

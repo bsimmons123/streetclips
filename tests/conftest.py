@@ -12,11 +12,38 @@ from pathlib import Path
 
 import pytest
 
+from streetclip.config import get_settings
 from streetclip.models import Segment, Transcript, Word
 
 needs_ffmpeg = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
     reason="ffmpeg/ffprobe not installed",
+)
+
+
+def _has_libass() -> bool:
+    """Burning captions needs the `subtitles` filter, which needs libass.
+
+    Several ffmpeg builds ship without it — Homebrew's slim `ffmpeg` formula is
+    one — and the failure mode is a confusing filtergraph parse error rather
+    than a clear "missing feature", so check up front.
+    """
+    binary = get_settings().ffmpeg_bin
+    if shutil.which(binary) is None:
+        return False
+    try:
+        result = subprocess.run(
+            [binary, "-hide_banner", "-filters"], capture_output=True, text=True, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return " subtitles " in result.stdout
+
+
+needs_libass = pytest.mark.skipif(
+    not _has_libass(),
+    reason="ffmpeg built without libass (no `subtitles` filter); "
+    "set STREETCLIP_FFMPEG_BIN to a build that has it",
 )
 
 
