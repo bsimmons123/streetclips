@@ -6,3 +6,7 @@ __pycache__/
 .pytest_cache/
 out/
 work/
+node_modules/
+data/
+input/
+src/streetclip/static/
