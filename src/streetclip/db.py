@@ -81,6 +81,7 @@ class Database:
         if self._shared is not None:
             self._shared.row_factory = sqlite3.Row
         self.migrate()
+        self.backfill_durations()
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -210,6 +211,33 @@ class Database:
         """Clips go too, via the schema's ON DELETE CASCADE."""
         with self.connect() as conn:
             conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+
+    def backfill_durations(self) -> int:
+        """Fill `duration` for jobs analyzed before the column existed.
+
+        Their runtime is already in the stored report, so a workspace from
+        before this migration would otherwise read 0:00 forever. Runs once —
+        after this, every row has a duration and the query matches nothing.
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id, report_json FROM jobs"
+                " WHERE duration = 0 AND report_json IS NOT NULL"
+            ).fetchall()
+
+            filled = 0
+            for row in rows:
+                try:
+                    duration = float(json.loads(row["report_json"])["media"]["duration"])
+                except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+                    continue
+                if duration <= 0:
+                    continue
+                conn.execute(
+                    "UPDATE jobs SET duration = ? WHERE id = ?", (duration, row["id"])
+                )
+                filled += 1
+        return filled
 
     def all_source_paths(self) -> list[str]:
         """Every job's source, including the one a caller is about to delete."""

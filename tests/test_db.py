@@ -379,3 +379,43 @@ def test_list_workspaces_excludes_render_jobs(db: Database):
 def test_list_workspaces_counts_zero_for_a_fresh_job(db: Database):
     db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
     assert db.list_workspaces()[0]["clip_count"] == 0
+
+
+def test_backfill_fills_durations_from_stored_reports(tmp_path):
+    """A workspace analyzed before the column existed must not read 0:00."""
+    import json as _json
+
+    path = tmp_path / "s.db"
+    db = Database(path)
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    report = {
+        "media": {"path": "/x/a.mp4", "duration": 3919.34, "width": 1280,
+                  "height": 720, "fps": 25.0},
+        "transcript": {"duration": 3919.34, "words": [], "segments": []},
+        "candidates": [],
+    }
+    db.finish_job(job_id, _json.dumps(report))
+    # Simulate the pre-migration state: report present, duration never set.
+    with db.connect() as conn:
+        conn.execute("UPDATE jobs SET duration = 0 WHERE id = ?", (job_id,))
+
+    assert db.backfill_durations() == 1
+    assert db.get_job(job_id)["duration"] == 3919.34
+    # Idempotent: nothing left to fill.
+    assert db.backfill_durations() == 0
+
+
+def test_backfill_skips_jobs_without_a_report(tmp_path):
+    db = Database(tmp_path / "s.db")
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert db.backfill_durations() == 0
+
+
+def test_backfill_survives_a_malformed_report(tmp_path):
+    """One corrupt row must not stop the others being filled."""
+    db = Database(tmp_path / "s.db")
+    bad = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.finish_job(bad, "{not json at all")
+
+    assert db.backfill_durations() == 0
+    assert db.get_job(bad)["duration"] == 0.0
