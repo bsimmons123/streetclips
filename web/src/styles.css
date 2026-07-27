@@ -751,3 +751,42 @@ select {
   font-weight: 600;
   font-size: 16px;
 }
+
+/* --- transcript ----------------------------------------------------------- */
+
+.transcript {
+  max-width: 46ch;
+  margin-bottom: 24px;
+  user-select: none;
+}
+
+.transcript-body {
+  font-size: 19px;
+  line-height: 1.7;
+  max-height: 300px;
+  overflow-y: auto;
+  cursor: text;
+}
+
+.transcript .word {
+  color: var(--mute);
+  border-radius: 2px;
+  transition: color 80ms ease;
+}
+
+.transcript .word.in-clip {
+  color: var(--bone);
+  background: rgba(242, 160, 61, 0.1);
+}
+
+.transcript .word.now {
+  color: var(--sodium);
+  font-weight: 600;
+}
+
+.transcript-hint {
+  margin: 10px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--mute);
+}
