@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     progress      REAL NOT NULL DEFAULT 0.0,
     error         TEXT,
     report_json   TEXT,
+    title         TEXT,
+    duration      REAL NOT NULL DEFAULT 0.0,
+    poster_path   TEXT,
     created_at    REAL NOT NULL,
     updated_at    REAL NOT NULL
 );
@@ -78,6 +81,7 @@ class Database:
         if self._shared is not None:
             self._shared.row_factory = sqlite3.Row
         self.migrate()
+        self.backfill_durations()
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -97,9 +101,21 @@ class Database:
         finally:
             conn.close()
 
+    # Columns added after the first release. CREATE TABLE IF NOT EXISTS will not
+    # add them to a database that already exists, so they are applied by ALTER.
+    ADDED_COLUMNS = (
+        ("title", "TEXT"),
+        ("duration", "REAL NOT NULL DEFAULT 0.0"),
+        ("poster_path", "TEXT"),
+    )
+
     def migrate(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            existing = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+            for name, decl in self.ADDED_COLUMNS:
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {decl}")
 
     # --- jobs ----------------------------------------------------------------
 
@@ -122,6 +138,25 @@ class Database:
         with self.connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_workspaces(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Analyze jobs with their clip tallies, newest first.
+
+        A LEFT JOIN aggregate rather than stored counters: the numbers change
+        on every keep and skip, and at this scale counting is free.
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT j.*,"
+                " COUNT(c.id) AS clip_count,"
+                " COALESCE(SUM(c.selected), 0) AS kept_count,"
+                " COUNT(c.rendered_path) AS rendered_count"
+                " FROM jobs j LEFT JOIN clips c ON c.job_id = j.id"
+                " WHERE j.kind = ?"
+                " GROUP BY j.id ORDER BY j.id DESC LIMIT ?",
+                (JobKind.ANALYZE.value, limit),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -170,6 +205,61 @@ class Database:
             conn.execute(
                 "UPDATE jobs SET status = ?, error = ?, updated_at = ? WHERE id = ?",
                 (JobStatus.FAILED.value, error[:2000], time.time(), job_id),
+            )
+
+    def delete_job(self, job_id: int) -> None:
+        """Clips go too, via the schema's ON DELETE CASCADE."""
+        with self.connect() as conn:
+            conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+
+    def backfill_durations(self) -> int:
+        """Fill `duration` for jobs analyzed before the column existed.
+
+        Their runtime is already in the stored report, so a workspace from
+        before this migration would otherwise read 0:00 forever. Runs once —
+        after this, every row has a duration and the query matches nothing.
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id, report_json FROM jobs"
+                " WHERE duration = 0 AND report_json IS NOT NULL"
+            ).fetchall()
+
+            filled = 0
+            for row in rows:
+                try:
+                    duration = float(json.loads(row["report_json"])["media"]["duration"])
+                except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+                    continue
+                if duration <= 0:
+                    continue
+                conn.execute(
+                    "UPDATE jobs SET duration = ? WHERE id = ?", (duration, row["id"])
+                )
+                filled += 1
+        return filled
+
+    def all_source_paths(self) -> list[str]:
+        """Every job's source, including the one a caller is about to delete."""
+        with self.connect() as conn:
+            rows = conn.execute("SELECT source_path FROM jobs").fetchall()
+        return [r["source_path"] for r in rows]
+
+    def rename_job(self, job_id: int, title: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE jobs SET title = ?, updated_at = ? WHERE id = ?",
+                (title.strip() or None, time.time(), job_id),
+            )
+        return self.get_job(job_id)
+
+    def set_media(self, job_id: int, duration: float, poster_path: str | None) -> None:
+        """Denormalize what the home list needs, so it never parses report_json."""
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE jobs SET duration = ?, poster_path = ?, updated_at = ?"
+                " WHERE id = ?",
+                (duration, poster_path, time.time(), job_id),
             )
 
     def requeue_running_jobs(self) -> int:

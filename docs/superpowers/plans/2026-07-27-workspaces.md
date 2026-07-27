@@ -512,22 +512,43 @@ The purge-then-render test is the load-bearing one in this plan. Deleting
 
 - [ ] **Step 1: Write the failing tests**
 
+These follow the exact stubbing convention of the existing analyze tests in
+`tests/test_worker.py` — without both monkeypatches they would call the real
+Groq and Anthropic APIs.
+
 ```python
 @needs_ffmpeg
-def test_analyze_purges_intermediate_audio(db, tmp_path, sample_video):
-    worker = Worker(db, tmp_path, settings=_settings())
+def test_analyze_purges_intermediate_audio(
+    db: Database, tmp_path: Path, sample_video: Path, monkeypatch
+):
+    from streetclip.pipeline.transcribe.base import FakeTranscriber
+
+    monkeypatch.setattr(
+        "streetclip.pipeline.run.get_transcriber", lambda s: FakeTranscriber(_transcript())
+    )
+    monkeypatch.setattr("streetclip.pipeline.score.Scorer", lambda *a, **k: _StubScorer())
+
     job_id = db.create_job(JobKind.ANALYZE, sample_video, sample_video.name)
-    worker.run_once()
+    data_dir = tmp_path / "data"
+    Worker(db, data_dir, settings=_settings()).run_once()
 
     assert db.get_job(job_id)["status"] == JobStatus.DONE
-    assert not (tmp_path / "job_00001" / "work" / "audio.wav").exists()
+    assert not (data_dir / "job_00001" / "work" / "audio.wav").exists()
 
 
 @needs_ffmpeg
-def test_analyze_records_duration_and_poster(db, tmp_path, sample_video):
-    worker = Worker(db, tmp_path, settings=_settings())
+def test_analyze_records_duration_and_poster(
+    db: Database, tmp_path: Path, sample_video: Path, monkeypatch
+):
+    from streetclip.pipeline.transcribe.base import FakeTranscriber
+
+    monkeypatch.setattr(
+        "streetclip.pipeline.run.get_transcriber", lambda s: FakeTranscriber(_transcript())
+    )
+    monkeypatch.setattr("streetclip.pipeline.score.Scorer", lambda *a, **k: _StubScorer())
+
     job_id = db.create_job(JobKind.ANALYZE, sample_video, sample_video.name)
-    worker.run_once()
+    Worker(db, tmp_path / "data", settings=_settings()).run_once()
 
     job = db.get_job(job_id)
     assert job["duration"] > 0
@@ -535,14 +556,23 @@ def test_analyze_records_duration_and_poster(db, tmp_path, sample_video):
 
 
 @needs_ffmpeg
-def test_render_still_works_after_the_purge(db, tmp_path, sample_video):
+def test_render_still_works_after_the_purge(
+    db: Database, tmp_path: Path, sample_video: Path, monkeypatch
+):
     """Exports must survive cleanup — this is what makes the purge safe."""
-    worker = Worker(db, tmp_path, settings=_settings())
+    from streetclip.pipeline.transcribe.base import FakeTranscriber
+
+    monkeypatch.setattr(
+        "streetclip.pipeline.run.get_transcriber", lambda s: FakeTranscriber(_transcript())
+    )
+    monkeypatch.setattr("streetclip.pipeline.score.Scorer", lambda *a, **k: _StubScorer())
+
+    worker = Worker(db, tmp_path / "data", settings=_settings())
     analyze_id = db.create_job(JobKind.ANALYZE, sample_video, sample_video.name)
     worker.run_once()
 
     clips = db.list_clips(analyze_id)
-    assert clips, "the fake scorer must produce at least one clip"
+    assert clips, "the stub scorer must produce at least one clip"
     db.update_clip(clips[0]["id"], None, None, True)
 
     enqueue_render(db, analyze_id)
@@ -552,9 +582,9 @@ def test_render_still_works_after_the_purge(db, tmp_path, sample_video):
     assert rendered and Path(rendered).is_file()
 ```
 
-`_settings()` already exists in `tests/test_worker.py` and disables captions and
-tracking. The worker's analyze path must be driven by a stub scorer the same
-way the existing worker tests do it — reuse whatever fixture those tests use.
+`_settings()`, `_transcript()`, and `_StubScorer` already exist in
+`tests/test_worker.py`. `_settings()` disables captions and speaker tracking.
+Note the worker's data dir is `tmp_path / "data"`, matching the existing tests.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -638,8 +668,11 @@ This is a rename, not new behavior. Every `/api/jobs` path becomes
 In `tests/test_api.py`, replace every occurrence of `"/api/jobs"` with
 `"/api/workspaces"`. Then add:
 
+`tests/test_api.py` has one fixture, `env`, yielding `(client, db, input_dir)`.
+
 ```python
-def test_list_workspaces_includes_counts_and_title(client, db):
+def test_list_workspaces_includes_counts_and_title(env):
+    client, db, _ = env
     job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
     db.rename_job(job_id, "Corner session")
 
@@ -650,19 +683,22 @@ def test_list_workspaces_includes_counts_and_title(client, db):
     assert "report_json" not in row, "the transcript must never reach the list"
 
 
-def test_title_falls_back_to_the_filename(client, db):
+def test_title_falls_back_to_the_filename(env):
+    client, db, _ = env
     db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
     assert client.get("/api/workspaces").json()[0]["title"] == "a.mp4"
 
 
-def test_rename_workspace(client, db):
+def test_rename_workspace(env):
+    client, db, _ = env
     job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
     response = client.patch(f"/api/workspaces/{job_id}", json={"title": "Renamed"})
     assert response.status_code == 200
     assert response.json()["title"] == "Renamed"
 
 
-def test_rename_rejects_an_empty_title(client, db):
+def test_rename_rejects_an_empty_title(env):
+    client, db, _ = env
     job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
     assert client.patch(f"/api/workspaces/{job_id}", json={"title": "  "}).status_code == 422
 ```
@@ -786,8 +822,14 @@ git commit -m "refactor(api): expose analyze jobs as workspaces"
 
 - [ ] **Step 1: Write the failing tests**
 
+`tests/test_api.py` has one fixture, `env`, yielding
+`(client, db, input_dir)`. Its data directory is `input_dir.parent / "data"`.
+Unpack it the way the existing tests in that file do.
+
 ```python
-def test_delete_workspace_removes_rows_and_directory(client, db, data_dir):
+def test_delete_workspace_removes_rows_and_directory(env):
+    client, db, input_dir = env
+    data_dir = input_dir.parent / "data"
     job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
     job_dir = data_dir / f"job_{job_id:05d}"
     (job_dir / "shorts").mkdir(parents=True)
@@ -798,9 +840,10 @@ def test_delete_workspace_removes_rows_and_directory(client, db, data_dir):
     assert not job_dir.exists()
 
 
-def test_delete_workspace_removes_its_upload(client, db, data_dir):
-    upload = data_dir / "uploads" / "a.mp4"
-    upload.parent.mkdir(parents=True)
+def test_delete_workspace_removes_its_upload(env):
+    client, db, input_dir = env
+    upload = input_dir.parent / "data" / "uploads" / "a.mp4"
+    upload.parent.mkdir(parents=True, exist_ok=True)
     upload.write_bytes(b"video")
     job_id = db.create_job(JobKind.ANALYZE, upload, "a.mp4")
 
@@ -808,9 +851,10 @@ def test_delete_workspace_removes_its_upload(client, db, data_dir):
     assert not upload.exists()
 
 
-def test_delete_workspace_keeps_an_upload_another_job_uses(client, db, data_dir):
-    upload = data_dir / "uploads" / "a.mp4"
-    upload.parent.mkdir(parents=True)
+def test_delete_workspace_keeps_an_upload_another_job_uses(env):
+    client, db, input_dir = env
+    upload = input_dir.parent / "data" / "uploads" / "a.mp4"
+    upload.parent.mkdir(parents=True, exist_ok=True)
     upload.write_bytes(b"video")
     first = db.create_job(JobKind.ANALYZE, upload, "a.mp4")
     db.create_job(JobKind.ANALYZE, upload, "a.mp4")
@@ -819,26 +863,32 @@ def test_delete_workspace_keeps_an_upload_another_job_uses(client, db, data_dir)
     assert upload.exists(), "the second workspace still needs it"
 
 
-def test_transcript_returns_words_without_the_report(client, db, finished_job):
-    body = client.get(f"/api/workspaces/{finished_job}/transcript").json()
+def test_transcript_returns_words_without_the_report(env, sample_video):
+    client, db, _ = env
+    job_id = _seed_done_job(db, sample_video)
+
+    body = client.get(f"/api/workspaces/{job_id}/transcript").json()
     assert body["words"][0]["text"]
     assert "start" in body["words"][0]
     assert "candidates" not in body and "media" not in body
 
 
-def test_transcript_404s_before_analysis_finishes(client, db):
+def test_transcript_404s_before_analysis_finishes(env):
+    client, db, _ = env
     job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
     assert client.get(f"/api/workspaces/{job_id}/transcript").status_code == 404
 
 
-def test_poster_404s_when_absent(client, db):
+def test_poster_404s_when_absent(env):
+    client, db, _ = env
     job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
     assert client.get(f"/api/workspaces/{job_id}/poster").status_code == 404
 ```
 
-`finished_job` is a fixture that creates an analyze job and calls
-`db.finish_job(job_id, report.model_dump_json())` with a `Report` carrying a
-transcript of at least one word. Add it to `tests/test_api.py` if absent.
+`_seed_done_job(db, source)` already exists in `tests/test_api.py` and stores a
+finished `Report`. Confirm the `Report` it builds carries at least one
+`Word`; if its transcript is empty, add a word to it so the transcript
+assertions have something to read.
 
 - [ ] **Step 2: Run tests to verify they fail**
 

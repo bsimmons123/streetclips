@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import * as api from "./api";
+import Transcript from "./Transcript";
 import { category, clock, stamp } from "./format";
 
 const NUDGES = [-1, -0.25, 0.25, 1];
@@ -42,6 +44,15 @@ export default function Review({ job, onPatchClip, onExport, exporting, onBack }
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const video = useRef(null);
+  const [words, setWords] = useState([]);
+
+  // Loaded once per workspace; the panel windows it down per clip.
+  useEffect(() => {
+    api
+      .getTranscript(job.id)
+      .then((t) => setWords(t.words || []))
+      .catch(() => setWords([]));
+  }, [job.id]);
 
   const current = clips[Math.min(index, clips.length - 1)];
 
@@ -172,7 +183,7 @@ export default function Review({ job, onPatchClip, onExport, exporting, onBack }
             <div className="player">
               <video
                 ref={video}
-                src={`/api/jobs/${job.id}/source`}
+                src={`/api/workspaces/${job.id}/source`}
                 preload="metadata"
                 onLoadedMetadata={seekToStart}
                 onTimeUpdate={onTimeUpdate}
@@ -190,7 +201,19 @@ export default function Review({ job, onPatchClip, onExport, exporting, onBack }
             </div>
 
             <div>
-              <p className="excerpt">{current.excerpt}</p>
+              {words.length > 0 ? (
+                <Transcript
+                  words={words}
+                  clip={current}
+                  position={position}
+                  onSeek={(t) => {
+                    if (video.current) video.current.currentTime = t;
+                  }}
+                  onSetBounds={({ start, end }) => onPatchClip(current.id, { start, end })}
+                />
+              ) : (
+                <p className="excerpt">{current.excerpt}</p>
+              )}
               {current.reason && <p className="reason">{current.reason}</p>}
 
               <div className="bounds">

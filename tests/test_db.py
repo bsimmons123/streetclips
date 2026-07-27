@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,18 @@ def _candidates(n: int = 3) -> list[Candidate]:
         )
         for i in range(n)
     ]
+
+
+def _candidate(start, end, score=8.0):
+    return Candidate(
+        start=start,
+        end=end,
+        score=score,
+        category=Category.ONE_LINER,
+        hook_title="t",
+        reason="r",
+        excerpt="e",
+    )
 
 
 # --- jobs --------------------------------------------------------------------
@@ -246,3 +260,162 @@ def test_schema_migration_is_idempotent(tmp_path: Path):
     # Reopening must not wipe or fail on the existing schema.
     second = Database(path)
     assert second.get_job(job_id) is not None
+
+
+def test_new_columns_default_sensibly(db: Database):
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    job = db.get_job(job_id)
+    assert job["title"] is None
+    assert job["duration"] == 0.0
+    assert job["poster_path"] is None
+
+
+def test_rename_sets_title(db: Database):
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    row = db.rename_job(job_id, "Corner session")
+    assert row["title"] == "Corner session"
+    assert db.get_job(job_id)["title"] == "Corner session"
+
+
+def test_set_media_records_duration_and_poster(db: Database):
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.set_media(job_id, 3919.3, "/data/job_00001/poster.jpg")
+    job = db.get_job(job_id)
+    assert job["duration"] == 3919.3
+    assert job["poster_path"].endswith("poster.jpg")
+
+
+def test_migrate_is_idempotent_on_an_existing_database(tmp_path):
+    """Columns are added by ALTER, which errors if applied twice."""
+    path = tmp_path / "s.db"
+    Database(path).migrate()
+    Database(path).migrate()  # must not raise
+    db = Database(path)
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert db.get_job(job_id)["title"] is None
+
+
+def _create_pre_migration_jobs_table(path: Path) -> int:
+    """Build a `jobs` table as it existed before title/duration/poster_path,
+    with one row already in it, and return that row's id.
+
+    This is the real shape of an operator's existing data/streetclip.db.
+    """
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE jobs (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind          TEXT NOT NULL,
+            status        TEXT NOT NULL,
+            source_path   TEXT NOT NULL,
+            source_name   TEXT NOT NULL,
+            stage         TEXT NOT NULL DEFAULT '',
+            progress      REAL NOT NULL DEFAULT 0.0,
+            error         TEXT,
+            report_json   TEXT,
+            created_at    REAL NOT NULL,
+            updated_at    REAL NOT NULL
+        )
+        """
+    )
+    now = time.time()
+    cursor = conn.execute(
+        "INSERT INTO jobs (kind, status, source_path, source_name, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (JobKind.ANALYZE.value, JobStatus.QUEUED.value, "/a.mp4", "a.mp4", now, now),
+    )
+    job_id = int(cursor.lastrowid)
+    conn.commit()
+    conn.close()
+    return job_id
+
+
+def test_migrate_adds_columns_to_a_genuinely_pre_migration_database(tmp_path: Path):
+    """The operator's real data/streetclip.db predates title/duration/poster_path
+    and already has rows in it. migrate() must ALTER it in place, twice without
+    raising, and the pre-existing row must survive with sensible defaults.
+    """
+    path = tmp_path / "existing.db"
+    job_id = _create_pre_migration_jobs_table(path)
+
+    db = Database(path)  # __init__ calls migrate()
+    db.migrate()  # calling it again must not raise
+
+    with db.connect() as conn:
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+    assert {"title", "duration", "poster_path"} <= columns
+
+    job = db.get_job(job_id)
+    assert job["title"] is None
+    assert job["duration"] == 0.0
+    assert job["poster_path"] is None
+
+
+# --- list_workspaces ----------------------------------------------------------
+
+
+def test_list_workspaces_counts_clips_by_state(db: Database):
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.replace_clips(job_id, [_candidate(0, 30), _candidate(60, 90), _candidate(120, 150)])
+    clips = db.list_clips(job_id)
+    db.update_clip(clips[0]["id"], None, None, True)
+    db.update_clip(clips[1]["id"], None, None, True)
+    db.set_rendered_path(clips[0]["id"], Path("/out/a.mp4"))
+
+    rows = db.list_workspaces()
+    assert len(rows) == 1
+    assert rows[0]["clip_count"] == 3
+    assert rows[0]["kept_count"] == 2
+    assert rows[0]["rendered_count"] == 1
+
+
+def test_list_workspaces_excludes_render_jobs(db: Database):
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.create_job(JobKind.RENDER, Path("1"), "a.mp4")
+    assert [r["kind"] for r in db.list_workspaces()] == ["analyze"]
+
+
+def test_list_workspaces_counts_zero_for_a_fresh_job(db: Database):
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert db.list_workspaces()[0]["clip_count"] == 0
+
+
+def test_backfill_fills_durations_from_stored_reports(tmp_path):
+    """A workspace analyzed before the column existed must not read 0:00."""
+    import json as _json
+
+    path = tmp_path / "s.db"
+    db = Database(path)
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    report = {
+        "media": {"path": "/x/a.mp4", "duration": 3919.34, "width": 1280,
+                  "height": 720, "fps": 25.0},
+        "transcript": {"duration": 3919.34, "words": [], "segments": []},
+        "candidates": [],
+    }
+    db.finish_job(job_id, _json.dumps(report))
+    # Simulate the pre-migration state: report present, duration never set.
+    with db.connect() as conn:
+        conn.execute("UPDATE jobs SET duration = 0 WHERE id = ?", (job_id,))
+
+    assert db.backfill_durations() == 1
+    assert db.get_job(job_id)["duration"] == 3919.34
+    # Idempotent: nothing left to fill.
+    assert db.backfill_durations() == 0
+
+
+def test_backfill_skips_jobs_without_a_report(tmp_path):
+    db = Database(tmp_path / "s.db")
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert db.backfill_durations() == 0
+
+
+def test_backfill_survives_a_malformed_report(tmp_path):
+    """One corrupt row must not stop the others being filled."""
+    db = Database(tmp_path / "s.db")
+    bad = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.finish_job(bad, "{not json at all")
+
+    assert db.backfill_durations() == 0
+    assert db.get_job(bad)["duration"] == 0.0

@@ -103,7 +103,7 @@ def test_creating_a_job_from_an_input_file(env):
     source = input_dir / "session.mp4"
     source.write_bytes(b"x")
 
-    response = client.post("/api/jobs", json={"path": str(source)})
+    response = client.post("/api/workspaces", json={"path": str(source)})
     assert response.status_code == 201
     assert response.json()["status"] == "queued"
     assert response.json()["source_name"] == "session.mp4"
@@ -111,7 +111,8 @@ def test_creating_a_job_from_an_input_file(env):
 
 def test_creating_a_job_for_a_missing_file(env):
     client, _, input_dir = env
-    assert client.post("/api/jobs", json={"path": str(input_dir / "nope.mp4")}).status_code == 404
+    response = client.post("/api/workspaces", json={"path": str(input_dir / "nope.mp4")})
+    assert response.status_code == 404
 
 
 def test_paths_outside_the_input_dir_are_refused(env, tmp_path: Path):
@@ -120,7 +121,7 @@ def test_paths_outside_the_input_dir_are_refused(env, tmp_path: Path):
     outside = tmp_path / "secret.mp4"
     outside.write_bytes(b"x")
 
-    assert client.post("/api/jobs", json={"path": str(outside)}).status_code == 403
+    assert client.post("/api/workspaces", json={"path": str(outside)}).status_code == 403
 
 
 def test_traversal_out_of_the_input_dir_is_refused(env, tmp_path: Path):
@@ -129,13 +130,13 @@ def test_traversal_out_of_the_input_dir_is_refused(env, tmp_path: Path):
     outside.write_bytes(b"x")
 
     sneaky = str(input_dir / ".." / "secret.mp4")
-    assert client.post("/api/jobs", json={"path": sneaky}).status_code == 403
+    assert client.post("/api/workspaces", json={"path": sneaky}).status_code == 403
 
 
 def test_uploading_a_file_creates_a_job(env):
     client, _, _ = env
     response = client.post(
-        "/api/jobs/upload", files={"file": ("session.mp4", b"video-bytes", "video/mp4")}
+        "/api/workspaces/upload", files={"file": ("session.mp4", b"video-bytes", "video/mp4")}
     )
     assert response.status_code == 201
     assert response.json()["source_name"] == "session.mp4"
@@ -145,7 +146,7 @@ def test_upload_filenames_are_stripped_of_directories(env, tmp_path: Path):
     """A filename like ../../etc/x must not escape the uploads directory."""
     client, _, _ = env
     response = client.post(
-        "/api/jobs/upload", files={"file": ("../../evil.mp4", b"x", "video/mp4")}
+        "/api/workspaces/upload", files={"file": ("../../evil.mp4", b"x", "video/mp4")}
     )
     assert response.status_code == 201
     assert response.json()["source_name"] == "evil.mp4"
@@ -161,7 +162,7 @@ def test_reading_a_finished_job_includes_clips_and_media(env, tmp_path: Path):
     source.write_bytes(b"x")
     job_id = _seed_done_job(db, source)
 
-    body = client.get(f"/api/jobs/{job_id}").json()
+    body = client.get(f"/api/workspaces/{job_id}").json()
     assert body["status"] == "done"
     assert len(body["clips"]) == 1
     assert body["clips"][0]["hook_title"] == "Who told you that"
@@ -171,7 +172,7 @@ def test_reading_a_finished_job_includes_clips_and_media(env, tmp_path: Path):
 
 def test_reading_a_missing_job(env):
     client, _, _ = env
-    assert client.get("/api/jobs/999").status_code == 404
+    assert client.get("/api/workspaces/999").status_code == 404
 
 
 def test_listing_jobs(env):
@@ -180,7 +181,7 @@ def test_listing_jobs(env):
     source.write_bytes(b"x")
     _seed_done_job(db, source)
 
-    body = client.get("/api/jobs").json()
+    body = client.get("/api/workspaces").json()
     assert len(body) == 1
     assert body[0]["kind"] == "analyze"
 
@@ -257,7 +258,7 @@ def test_render_queues_a_job(env):
     job_id = _seed_done_job(db, source)
     db.update_clip(db.list_clips(job_id)[0]["id"], selected=True)
 
-    response = client.post(f"/api/jobs/{job_id}/render")
+    response = client.post(f"/api/workspaces/{job_id}/render")
     assert response.status_code == 201
     assert response.json()["kind"] == "render"
     assert response.json()["status"] == "queued"
@@ -269,7 +270,7 @@ def test_render_of_an_unfinished_job_is_refused(env):
     source.write_bytes(b"x")
     job_id = db.create_job(JobKind.ANALYZE, source, "s.mp4")
 
-    assert client.post(f"/api/jobs/{job_id}/render").status_code == 400
+    assert client.post(f"/api/workspaces/{job_id}/render").status_code == 400
 
 
 def test_downloading_before_rendering_is_a_conflict(env):
@@ -320,11 +321,11 @@ def test_source_is_served_with_range_support(env, sample_video: Path):
     source.write_bytes(sample_video.read_bytes())
     job_id = db.create_job(JobKind.ANALYZE, source, "s.mp4")
 
-    full = client.get(f"/api/jobs/{job_id}/source")
+    full = client.get(f"/api/workspaces/{job_id}/source")
     assert full.status_code == 200
     assert full.headers["accept-ranges"] == "bytes"
 
-    partial = client.get(f"/api/jobs/{job_id}/source", headers={"Range": "bytes=100-199"})
+    partial = client.get(f"/api/workspaces/{job_id}/source", headers={"Range": "bytes=100-199"})
     assert partial.status_code == 206
     assert partial.headers["content-range"].startswith("bytes 100-199/")
     assert len(partial.content) == 100
@@ -333,13 +334,13 @@ def test_source_is_served_with_range_support(env, sample_video: Path):
 
 def test_source_for_a_missing_job(env):
     client, _, _ = env
-    assert client.get("/api/jobs/999/source").status_code == 404
+    assert client.get("/api/workspaces/999/source").status_code == 404
 
 
 def test_source_when_the_file_has_been_removed(env, tmp_path: Path):
     client, db, _ = env
     job_id = db.create_job(JobKind.ANALYZE, tmp_path / "gone.mp4", "gone.mp4")
-    assert client.get(f"/api/jobs/{job_id}/source").status_code == 404
+    assert client.get(f"/api/workspaces/{job_id}/source").status_code == 404
 
 
 # --- SSE ---------------------------------------------------------------------
@@ -353,7 +354,7 @@ def test_events_stream_reports_progress_then_closes(env):
     # Settle the job before connecting so the stream terminates promptly.
     db.finish_job(job_id, json.dumps({"candidates": []}))
 
-    with client.stream("GET", f"/api/jobs/{job_id}/events") as response:
+    with client.stream("GET", f"/api/workspaces/{job_id}/events") as response:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
         body = "".join(response.iter_text())
@@ -370,7 +371,7 @@ def test_events_stream_reports_failures(env):
     job_id = db.create_job(JobKind.ANALYZE, source, "s.mp4")
     db.fail_job(job_id, "ffmpeg exploded")
 
-    with client.stream("GET", f"/api/jobs/{job_id}/events") as response:
+    with client.stream("GET", f"/api/workspaces/{job_id}/events") as response:
         body = "".join(response.iter_text())
 
     payloads = [json.loads(line[6:]) for line in body.splitlines() if line.startswith("data: ")]
@@ -380,4 +381,153 @@ def test_events_stream_reports_failures(env):
 
 def test_events_for_a_missing_job(env):
     client, _, _ = env
-    assert client.get("/api/jobs/999/events").status_code == 404
+    assert client.get("/api/workspaces/999/events").status_code == 404
+
+
+# --- workspaces --------------------------------------------------------------
+
+
+def test_list_workspaces_includes_counts_and_title(env):
+    client, db, _ = env
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.rename_job(job_id, "Corner session")
+
+    row = client.get("/api/workspaces").json()[0]
+    assert row["title"] == "Corner session"
+    assert row["clip_count"] == 0
+    assert row["has_poster"] is False
+    assert "report_json" not in row, "the transcript must never reach the list"
+
+
+def test_title_falls_back_to_the_filename(env):
+    client, db, _ = env
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert client.get("/api/workspaces").json()[0]["title"] == "a.mp4"
+
+
+def test_rename_workspace(env):
+    client, db, _ = env
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    response = client.patch(f"/api/workspaces/{job_id}", json={"title": "Renamed"})
+    assert response.status_code == 200
+    assert response.json()["title"] == "Renamed"
+
+
+def test_rename_rejects_a_blank_title(env):
+    client, db, _ = env
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert client.patch(f"/api/workspaces/{job_id}", json={"title": "  "}).status_code == 422
+
+
+def test_rename_a_missing_workspace(env):
+    client, _, _ = env
+    assert client.patch("/api/workspaces/999", json={"title": "x"}).status_code == 404
+
+
+def test_list_workspaces_excludes_render_jobs(env):
+    """Render jobs are internal plumbing; the operator never sees them."""
+    client, db, _ = env
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.create_job(JobKind.RENDER, Path("1"), "a.mp4")
+    assert len(client.get("/api/workspaces").json()) == 1
+
+
+# --- delete, transcript, poster ----------------------------------------------
+
+
+def test_delete_workspace_removes_rows_and_directory(env):
+    client, db, input_dir = env
+    data_dir = input_dir.parent / "data"
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    job_dir = data_dir / f"job_{job_id:05d}"
+    (job_dir / "shorts").mkdir(parents=True)
+    (job_dir / "shorts" / "01.mp4").write_bytes(b"video")
+
+    assert client.delete(f"/api/workspaces/{job_id}").status_code == 204
+    assert db.get_job(job_id) is None
+    assert not job_dir.exists()
+
+
+def test_delete_workspace_cascades_to_its_clips(env):
+    client, db, _ = env
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.replace_clips(job_id, [_candidate()])
+    assert db.list_clips(job_id)
+
+    client.delete(f"/api/workspaces/{job_id}")
+    assert db.list_clips(job_id) == []
+
+
+def test_delete_workspace_removes_its_upload(env):
+    client, db, input_dir = env
+    upload = input_dir.parent / "data" / "uploads" / "a.mp4"
+    upload.parent.mkdir(parents=True, exist_ok=True)
+    upload.write_bytes(b"video")
+    job_id = db.create_job(JobKind.ANALYZE, upload, "a.mp4")
+
+    client.delete(f"/api/workspaces/{job_id}")
+    assert not upload.exists()
+
+
+def test_delete_workspace_keeps_an_upload_another_job_uses(env):
+    """Two workspaces can point at the same uploaded file."""
+    client, db, input_dir = env
+    upload = input_dir.parent / "data" / "uploads" / "a.mp4"
+    upload.parent.mkdir(parents=True, exist_ok=True)
+    upload.write_bytes(b"video")
+    first = db.create_job(JobKind.ANALYZE, upload, "a.mp4")
+    db.create_job(JobKind.ANALYZE, upload, "a.mp4")
+
+    client.delete(f"/api/workspaces/{first}")
+    assert upload.exists(), "the second workspace still needs it"
+
+
+def test_delete_leaves_files_in_the_input_directory_alone(env):
+    """Originals the operator put there are not ours to remove."""
+    client, db, input_dir = env
+    original = input_dir / "a.mp4"
+    original.write_bytes(b"video")
+    job_id = db.create_job(JobKind.ANALYZE, original, "a.mp4")
+
+    client.delete(f"/api/workspaces/{job_id}")
+    assert original.exists()
+
+
+def test_delete_a_missing_workspace(env):
+    client, _, _ = env
+    assert client.delete("/api/workspaces/999").status_code == 404
+
+
+def test_transcript_returns_words_without_the_report(env, sample_video):
+    client, db, _ = env
+    job_id = _seed_done_job(db, sample_video)
+
+    body = client.get(f"/api/workspaces/{job_id}/transcript").json()
+    assert body["words"][0]["text"] == "a"
+    assert body["words"][0]["start"] == 0.0
+    assert "candidates" not in body and "media" not in body
+
+
+def test_transcript_404s_before_analysis_finishes(env):
+    client, db, _ = env
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert client.get(f"/api/workspaces/{job_id}/transcript").status_code == 404
+
+
+def test_poster_404s_when_absent(env):
+    client, db, _ = env
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    assert client.get(f"/api/workspaces/{job_id}/poster").status_code == 404
+
+
+def test_poster_is_served_when_present(env):
+    client, db, input_dir = env
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    poster = input_dir.parent / "data" / f"job_{job_id:05d}" / "poster.jpg"
+    poster.parent.mkdir(parents=True, exist_ok=True)
+    poster.write_bytes(b"\xff\xd8fake-jpeg")
+    db.set_media(job_id, 12.5, str(poster))
+
+    response = client.get(f"/api/workspaces/{job_id}/poster")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"

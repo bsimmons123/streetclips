@@ -10,3 +10,6 @@ node_modules/
 data/
 input/
 src/streetclip/static/
+
+# SDD scratch workspace
+.superpowers/
