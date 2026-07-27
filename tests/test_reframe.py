@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from streetclip.config import Settings
 from streetclip.pipeline.render import reframe
 from streetclip.pipeline.render.reframe import Detection, Keyframe, Sample
@@ -314,3 +316,72 @@ def test_plan_for_clip_end_to_end(sample_video: Path):
     assert plan.tracked
     assert plan.crop_width == reframe.crop_width_for(360)
     assert plan.crop_height == 360
+
+
+# --- detector selection ------------------------------------------------------
+
+
+def _fake_mediapipe(monkeypatch, *, solutions: bool):
+    """Stand in for whichever mediapipe wheel is installed."""
+    import sys
+    import types
+
+    module = types.ModuleType("mediapipe")
+    if solutions:
+        detection = types.SimpleNamespace(FaceDetection=lambda **kwargs: object())
+        module.solutions = types.SimpleNamespace(face_detection=detection)
+    monkeypatch.setitem(sys.modules, "mediapipe", module)
+    return module
+
+
+def test_get_detector_prefers_the_solutions_api(monkeypatch):
+    _fake_mediapipe(monkeypatch, solutions=True)
+    assert isinstance(reframe.get_detector(Settings()), reframe.MediaPipeDetector)
+
+
+def test_get_detector_falls_back_to_tasks_with_a_model(monkeypatch, tmp_path):
+    """Wheels from 0.10.35 dropped solutions; the Tasks API needs a model file."""
+    _fake_mediapipe(monkeypatch, solutions=False)
+    model = tmp_path / "face.tflite"
+    model.write_bytes(b"not really a model")
+
+    built = {}
+    monkeypatch.setattr(
+        reframe,
+        "MediaPipeTasksDetector",
+        lambda path, confidence=0.5: built.setdefault("path", path),
+    )
+    reframe.get_detector(Settings(face_model_path=str(model)))
+    assert built["path"] == model
+
+
+def test_get_detector_without_solutions_or_a_model(monkeypatch):
+    """Unavailable tracking must read as ImportError, so rendering degrades."""
+    _fake_mediapipe(monkeypatch, solutions=False)
+    with pytest.raises(ImportError, match="face detection model"):
+        reframe.get_detector(Settings())
+
+
+def test_tasks_detector_rejects_a_missing_model(monkeypatch, tmp_path):
+    _fake_mediapipe(monkeypatch, solutions=False)
+    with pytest.raises(ImportError, match="not found"):
+        reframe.MediaPipeTasksDetector(tmp_path / "absent.tflite")
+
+
+def test_tasks_detector_rejects_an_unreadable_model(monkeypatch, tmp_path):
+    """A model baked into an image with the wrong mode must degrade, not crash."""
+    _fake_mediapipe(monkeypatch, solutions=False)
+    model = tmp_path / "face.tflite"
+    model.write_bytes(b"not really a model")
+    model.chmod(0o000)
+    try:
+        with pytest.raises(ImportError, match="not found"):
+            reframe.MediaPipeTasksDetector(model)
+    finally:
+        model.chmod(0o644)
+
+
+def test_solutions_detector_rejects_a_build_without_solutions(monkeypatch):
+    _fake_mediapipe(monkeypatch, solutions=False)
+    with pytest.raises(ImportError, match="no solutions API"):
+        reframe.MediaPipeDetector()

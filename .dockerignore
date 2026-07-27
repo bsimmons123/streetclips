@@ -1,0 +1,22 @@
+.git
+.gitignore
+.venv
+.env
+.pytest_cache
+.ruff_cache
+**/__pycache__
+*.egg-info
+uv.lock
+
+# Built in the web stage; a host build would otherwise shadow it.
+web/node_modules
+src/streetclip/static
+
+# Runtime state and footage never belong in an image layer.
+data
+input
+out
+work
+tests
+Dockerfile
+compose.yaml

@@ -1,0 +1,22 @@
+services:
+  streetclip:
+    build:
+      context: .
+      args:
+        # Add local-whisper here to transcribe on the box instead of via Groq.
+        EXTRAS: ${STREETCLIP_EXTRAS:-groq,reframe}
+    image: streetclip:latest
+    restart: unless-stopped
+    ports:
+      - "${STREETCLIP_BIND:-8080}:8080"
+    environment:
+      STREETCLIP_TRANSCRIBE_BACKEND: ${STREETCLIP_TRANSCRIBE_BACKEND:-groq}
+      STREETCLIP_GROQ_API_KEY: ${STREETCLIP_GROQ_API_KEY:-}
+      STREETCLIP_ANTHROPIC_API_KEY: ${STREETCLIP_ANTHROPIC_API_KEY:-}
+      STREETCLIP_LOCAL_WHISPER_MODEL: ${STREETCLIP_LOCAL_WHISPER_MODEL:-small.en}
+    volumes:
+      # Recordings to pick from. Read-only: the pipeline never writes here.
+      - ./input:/input:ro
+      # Job database, working files, and rendered shorts. Bind-mounted so the
+      # exports are reachable on the host without going through the browser.
+      - ./data:/data

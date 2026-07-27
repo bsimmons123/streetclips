@@ -116,7 +116,7 @@ def render_shorts(
     detector = None
     if track_speaker:
         try:
-            detector = reframe.MediaPipeDetector()
+            detector = reframe.get_detector(settings)
         except ImportError:
             # Rendering without tracking is a worse clip, not a failed run.
             track_speaker = False

@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     # doesn't jitter around a stationary speaker.
     reframe_deadzone: float = 0.02
     reframe_min_detection_ratio: float = 0.25
+    # Face model for mediapipe's Tasks API, needed on wheels that dropped the
+    # legacy solutions API (0.10.35+). The Docker image downloads it at build
+    # time; leave empty when the installed wheel still has solutions.
+    face_model_path: str = ""
 
     # Web service. `input_dir` is the mounted folder the operator picks from;
     # nothing outside it can be submitted by path.

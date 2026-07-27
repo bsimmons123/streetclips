@@ -275,8 +275,11 @@ def test_start_requeues_jobs_left_running_by_a_crash(db: Database, tmp_path: Pat
     worker = Worker(db, tmp_path / "data", settings=_settings(), poll_seconds=0.01)
     worker.start()
     try:
+        # Wait for a terminal status: leaving QUEUED only means the worker
+        # claimed it, and on a loaded machine the run itself takes a moment.
         deadline = time.time() + 5.0
-        while time.time() < deadline and db.get_job(1)["status"] == JobStatus.QUEUED:
+        terminal = (JobStatus.DONE, JobStatus.FAILED)
+        while time.time() < deadline and db.get_job(1)["status"] not in terminal:
             time.sleep(0.02)
         # It was requeued and then picked up (and failed, since the file is missing).
         assert db.get_job(1)["status"] == JobStatus.FAILED

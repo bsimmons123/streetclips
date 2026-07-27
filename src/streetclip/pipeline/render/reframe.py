@@ -11,6 +11,7 @@ deadzone, the smoothing window, and holding position through dropouts.
 
 from __future__ import annotations
 
+import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,10 +55,21 @@ class FaceDetector(Protocol):
 
 
 class MediaPipeDetector:
-    """Short-range face detection. Imported lazily — mediapipe is an optional dep."""
+    """Short-range face detection via the legacy `solutions` API.
+
+    Imported lazily — mediapipe is an optional dep. Wheels from 0.10.35 onward
+    dropped `solutions` entirely, so prefer `get_detector` over constructing
+    this directly.
+    """
 
     def __init__(self, min_confidence: float = 0.5) -> None:
         import mediapipe as mp
+
+        if not hasattr(mp, "solutions"):
+            raise ImportError(
+                "this mediapipe build has no solutions API; use the tasks "
+                "detector with a downloaded model instead"
+            )
 
         self._detector = mp.solutions.face_detection.FaceDetection(
             model_selection=1, min_detection_confidence=min_confidence
@@ -82,6 +94,82 @@ class MediaPipeDetector:
                 )
             )
         return found
+
+
+class MediaPipeTasksDetector:
+    """Short-range face detection via the Tasks API.
+
+    Unlike `solutions`, this one needs the model file on disk — the Docker
+    image downloads it at build time and points `face_model_path` at it.
+    """
+
+    def __init__(self, model_path: Path, min_confidence: float = 0.5) -> None:
+        import mediapipe as mp
+
+        # Unreadable is reported the same as absent: both mean tracking is
+        # unavailable, and the caller's fallback keys off ImportError.
+        try:
+            readable = model_path.is_file() and os.access(model_path, os.R_OK)
+        except OSError as exc:
+            raise ImportError(f"face detection model at {model_path} is unreadable: {exc}") from exc
+        if not readable:
+            raise ImportError(f"face detection model not found at {model_path}")
+
+        vision = mp.tasks.vision
+        self._mp = mp
+        self._detector = vision.FaceDetector.create_from_options(
+            vision.FaceDetectorOptions(
+                base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
+                min_detection_confidence=min_confidence,
+            )
+        )
+
+    def detect(self, image) -> list[Detection]:
+        frame = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=image)
+        result = self._detector.detect(frame)
+
+        found = []
+        for detection in result.detections:
+            box = detection.bounding_box
+            found.append(
+                Detection(
+                    # The Tasks API reports pixels, where solutions reported
+                    # fractions of the frame.
+                    x=float(box.origin_x),
+                    y=float(box.origin_y),
+                    width=float(box.width),
+                    height=float(box.height),
+                    confidence=detection.categories[0].score if detection.categories else 0.0,
+                )
+            )
+        return found
+
+
+def get_detector(settings: Settings | None = None, min_confidence: float = 0.5) -> FaceDetector:
+    """Build a detector against whichever face API this mediapipe wheel ships.
+
+    Raises ImportError when tracking is unavailable for any reason, which is
+    what lets the renderer fall back to a center crop instead of failing.
+    """
+    settings = settings or get_settings()
+
+    import mediapipe as mp
+
+    # Mediapipe dlopens GL libraries when a detector is created, so a wheel that
+    # imports fine can still fail here. That is an unavailable detector, not a
+    # broken render.
+    try:
+        if hasattr(mp, "solutions"):
+            return MediaPipeDetector(min_confidence)
+        if settings.face_model_path:
+            return MediaPipeTasksDetector(Path(settings.face_model_path), min_confidence)
+    except OSError as exc:
+        raise ImportError(f"mediapipe could not start face detection: {exc}") from exc
+
+    raise ImportError(
+        "this mediapipe build needs a face detection model; set "
+        "STREETCLIP_FACE_MODEL_PATH to a blaze_face_short_range .tflite file"
+    )
 
 
 def pick_subject(detections: list[Detection]) -> Detection | None:
