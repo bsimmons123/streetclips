@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Caption,DejaVu Sans,76,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,4,2,2,80,80,420,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:00.60,Caption,,0,0,0,,{\c&H0000E5FF}Repent{\c&H00FFFFFF} and believe
+Dialogue: 0,0:00:00.60,0:00:00.80,Caption,,0,0,0,,Repent {\c&H0000E5FF}and{\c&H00FFFFFF} believe
+Dialogue: 0,0:00:00.80,0:00:01.40,Caption,,0,0,0,,Repent and {\c&H0000E5FF}believe{\c&H00FFFFFF}
+Dialogue: 0,0:00:01.40,0:00:01.60,Caption,,0,0,0,,{\c&H0000E5FF}the{\c&H00FFFFFF} gospel
+Dialogue: 0,0:00:01.60,0:00:02.40,Caption,,0,0,0,,the {\c&H0000E5FF}gospel{\c&H00FFFFFF}
+Dialogue: 0,0:00:04.00,0:00:04.30,Caption,,0,0,0,,{\c&H0000E5FF}Who{\c&H00FFFFFF} told you
+Dialogue: 0,0:00:04.30,0:00:04.60,Caption,,0,0,0,,Who {\c&H0000E5FF}told{\c&H00FFFFFF} you
+Dialogue: 0,0:00:04.60,0:00:04.90,Caption,,0,0,0,,Who told {\c&H0000E5FF}you{\c&H00FFFFFF}
+Dialogue: 0,0:00:04.90,0:00:05.60,Caption,,0,0,0,,{\c&H0000E5FF}that?{\c&H00FFFFFF}
