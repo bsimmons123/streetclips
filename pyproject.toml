@@ -13,6 +13,9 @@ dependencies = [
 [project.optional-dependencies]
 groq = ["groq>=0.13"]
 local-whisper = ["faster-whisper>=1.1"]
+# Speaker tracking for the 9:16 reframe. Without these, rendering still works
+# but falls back to a fixed center crop.
+reframe = ["mediapipe>=0.10", "pillow>=11.0"]
 
 [project.scripts]
 streetclip = "streetclip.cli:main"
