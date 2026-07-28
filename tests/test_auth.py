@@ -28,15 +28,15 @@ def _app(accounts: Accounts) -> FastAPI:
     app = FastAPI()
 
     @app.get("/who")
-    def who(user=Depends(current_user)):  # noqa: B008
+    def who(user=Depends(current_user)):
         return {"email": user["email"]}
 
     @app.get("/spend")
-    def spend(user=Depends(approved_user)):  # noqa: B008
+    def spend(user=Depends(approved_user)):
         return {"ok": True}
 
     @app.get("/admin")
-    def admin(user=Depends(admin_user)):  # noqa: B008
+    def admin(user=Depends(admin_user)):
         return {"ok": True}
 
     return app

@@ -96,12 +96,12 @@ def make_dependencies(accounts: Accounts) -> tuple[Callable, Callable, Callable]
             raise HTTPException(401, "not signed in")
         return user
 
-    def approved_user(user=Depends(current_user)):  # noqa: B008
+    def approved_user(user=Depends(current_user)):
         if user["approved_at"] is None:
             raise HTTPException(403, "this account is awaiting approval")
         return user
 
-    def admin_user(user=Depends(current_user)):  # noqa: B008
+    def admin_user(user=Depends(current_user)):
         if not user["is_admin"]:
             raise HTTPException(403, "admin only")
         return user
