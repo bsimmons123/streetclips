@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
@@ -50,7 +51,11 @@ def user_payload(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_auth_router(accounts: Accounts, settings: Settings) -> APIRouter:
+def build_auth_router(
+    accounts: Accounts,
+    settings: Settings,
+    delete_user_data: Callable[[int], None] | None = None,
+) -> APIRouter:
     router = APIRouter()
     current_user, _approved_user, admin_user = make_dependencies(accounts)
 
@@ -73,8 +78,12 @@ def build_auth_router(accounts: Accounts, settings: Settings) -> APIRouter:
         return user_payload(user)
 
     @router.delete("/api/session", status_code=204)
-    def log_out(response: Response, user=Depends(current_user)) -> Response:
-        accounts.delete_user_sessions(user["id"], keep=None)
+    def log_out(
+        response: Response,
+        user=Depends(current_user),
+        session: str | None = Cookie(default=None, alias=COOKIE_NAME),
+    ) -> Response:
+        accounts.delete_session(session or "")
         clear_session_cookie(response)
         return Response(status_code=204)
 
@@ -135,6 +144,18 @@ def build_auth_router(accounts: Accounts, settings: Settings) -> APIRouter:
         # Disabling has to take effect now, not when the cookie expires.
         accounts.delete_user_sessions(user_id, keep=None)
         return user_payload(accounts.get_user(user_id))
+
+    @router.delete("/api/users/{user_id}", status_code=204)
+    def delete_user(user_id: int, admin=Depends(admin_user)) -> Response:
+        target = accounts.get_user(user_id)
+        if target is None:
+            raise HTTPException(404, "no such account")
+        if target["is_admin"]:
+            raise HTTPException(409, "admin accounts cannot be deleted")
+        if delete_user_data is not None:
+            delete_user_data(user_id)
+        accounts.delete_user(user_id)
+        return Response(status_code=204)
 
     @router.post("/api/signup", status_code=201)
     def sign_up(account: NewAccount) -> dict[str, Any]:

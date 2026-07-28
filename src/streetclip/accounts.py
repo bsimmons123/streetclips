@@ -129,6 +129,9 @@ class Accounts:
 
     def delete_user(self, user_id: int) -> None:
         with self.connect() as conn:
+            conn.execute(
+                "UPDATE users SET approved_by = NULL WHERE approved_by = ?", (user_id,)
+            )
             conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
     # --- sessions ------------------------------------------------------------

@@ -76,10 +76,12 @@ def test_reading_the_session_without_one_is_401(env):
 
 
 def test_logout_clears_the_session(env):
-    client, _, _ = env
+    client, accounts, admin_id = env
+    other = accounts.create_session(admin_id)
     _login(client, "admin@x.com", "adminpw")
     assert client.delete("/api/session").status_code == 204
     assert client.get("/api/session").status_code == 401
+    assert accounts.resolve_session(other) is not None
 
 
 def test_changing_a_password_logs_out_other_sessions(env):
@@ -128,6 +130,7 @@ def test_a_non_admin_cannot_list_users(env):
         ("post", "/api/users/{user_id}/approve", {}),
         ("post", "/api/users/{user_id}/revoke", {}),
         ("post", "/api/users/{user_id}/disable", {}),
+        ("delete", "/api/users/{user_id}", {}),
     ],
 )
 def test_every_admin_route_refuses_a_non_admin(env, method, path, kwargs):
@@ -161,6 +164,29 @@ def test_disabling_kills_live_sessions(env):
 
     assert client.post(f"/api/users/{user_id}/disable").status_code == 200
     assert accounts.resolve_session(token) is None
+
+
+def test_deleting_a_user_runs_cleanup_and_removes_the_account(env):
+    _, accounts, _ = env
+    user_id = accounts.create_user("gone@x.com", hash_password("pw"), approved=True)
+    cleaned = []
+    app = FastAPI()
+    app.include_router(
+        build_auth_router(accounts, Settings(), delete_user_data=cleaned.append)
+    )
+
+    with TestClient(app) as client:
+        _login(client, "admin@x.com", "adminpw")
+        assert client.delete(f"/api/users/{user_id}").status_code == 204
+
+    assert cleaned == [user_id]
+    assert accounts.get_user(user_id) is None
+
+
+def test_an_admin_account_cannot_be_deleted(env):
+    client, _, admin_id = env
+    _login(client, "admin@x.com", "adminpw")
+    assert client.delete(f"/api/users/{admin_id}").status_code == 409
 
 
 def test_signup_is_closed_by_default(env):

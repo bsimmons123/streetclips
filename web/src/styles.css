@@ -125,6 +125,96 @@ select {
   color: var(--bone);
 }
 
+.btn.danger {
+  border-color: transparent;
+  color: var(--alarm);
+}
+
+.btn.danger:hover:not(:disabled) {
+  border-color: var(--alarm);
+}
+
+/* --- accounts ------------------------------------------------------------- */
+
+.login {
+  width: min(360px, 100%);
+  margin: 0 auto;
+  padding: 90px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login h1 {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 28px;
+  text-transform: lowercase;
+  letter-spacing: -0.02em;
+  margin: 0 0 24px;
+}
+
+.login h1 span {
+  color: var(--sodium);
+}
+
+.login input,
+.new-user input {
+  background: var(--slab);
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  padding: 10px 12px;
+}
+
+.login input {
+  margin-bottom: 10px;
+}
+
+.login input:focus,
+.new-user input:focus {
+  outline: none;
+  border-color: var(--sodium);
+}
+
+.login .btn {
+  margin-top: 10px;
+}
+
+.login-error {
+  color: var(--alarm);
+  font-size: 14px;
+  margin: 4px 0 0;
+}
+
+.pending-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.new-user {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.new-user input {
+  min-width: 0;
+  flex: 1;
+}
+
+.account-row {
+  flex-wrap: wrap;
+}
+
+.account-row .btn {
+  padding: 5px 9px;
+}
+
+.account-email {
+  max-width: 260px;
+}
+
 /* --- source picker -------------------------------------------------------- */
 
 .picker {

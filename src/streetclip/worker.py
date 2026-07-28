@@ -175,4 +175,9 @@ def enqueue_render(db: Database, analyze_job_id: int) -> int:
     if job["status"] != JobStatus.DONE:
         raise ValueError("cannot render a job that has not finished analyzing")
 
-    return db.create_job(JobKind.RENDER, Path(str(analyze_job_id)), job["source_name"])
+    return db.create_job(
+        JobKind.RENDER,
+        Path(str(analyze_job_id)),
+        job["source_name"],
+        user_id=job["user_id"],
+    )

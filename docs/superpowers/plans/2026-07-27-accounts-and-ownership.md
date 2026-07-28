@@ -4,6 +4,14 @@
 
 **Goal:** Give streetclip user accounts, per-user workspace ownership, and an admin approval gate so an unapproved account cannot spend the machine's disk, CPU, or API budget.
 
+**Status (2026-07-28): Complete.** Tasks 1–9 are implemented and verified.
+The omitted `DELETE /api/users/{id}` work was added after Task 7, including
+workspace, upload, session, and approval-reference cleanup. Final review also
+fixed render-job ownership, current-session-only logout, MediaPipe startup
+fallback, and the Docker healthcheck. The live database has one approved admin,
+six owned jobs, and no ownerless jobs; the deployed multi-user isolation,
+revocation, deletion, and authentication checks pass.
+
 **Architecture:** Accounts live in two new modules rather than being bolted onto `db.py` (356 lines) and `api.py` (343 lines): `accounts.py` owns the users and sessions tables, `auth.py` owns hashing, cookies, and the FastAPI dependencies. Authorization is one rule — you may act on a workspace you own — enforced by a dependency on every route, with a route-table test that fails when a new endpoint forgets it.
 
 **Tech Stack:** Python 3.12, FastAPI, SQLite, argon2-cffi, React 18, Vite.

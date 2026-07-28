@@ -139,6 +139,21 @@ def test_enqueue_render_requires_a_finished_analysis(db: Database):
         enqueue_render(db, job_id)
 
 
+def test_render_job_inherits_analysis_owner(db: Database):
+    analyze_id = db.create_job(
+        JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4", user_id=17
+    )
+    db.finish_job(analyze_id, Report(
+        media=MediaInfo(path="/x/a.mp4", duration=10, width=640, height=360, fps=30),
+        transcript=Transcript(duration=10),
+        candidates=[],
+    ).model_dump_json())
+
+    render_id = enqueue_render(db, analyze_id)
+
+    assert db.get_job(render_id)["user_id"] == 17
+
+
 def test_enqueue_render_requires_a_real_job(db: Database):
     with pytest.raises(ValueError, match="no such job"):
         enqueue_render(db, 999)

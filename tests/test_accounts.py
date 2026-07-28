@@ -76,6 +76,16 @@ def test_delete_removes_the_user(accounts: Accounts):
     assert accounts.get_user(user) is None
 
 
+def test_deleting_an_approver_keeps_approved_accounts(accounts: Accounts):
+    admin = accounts.create_user("admin@x.com", "h", is_admin=True, approved=True)
+    user = accounts.create_user("user@x.com", "h")
+    accounts.set_approved(user, approved_by=admin)
+
+    accounts.delete_user(admin)
+
+    assert accounts.get_user(user)["approved_by"] is None
+
+
 def test_migrate_is_idempotent(tmp_path: Path):
     path = tmp_path / "s.db"
     Accounts(path)

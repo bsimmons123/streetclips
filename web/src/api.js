@@ -19,6 +19,32 @@ const json = (body) => ({
   body: JSON.stringify(body),
 });
 
+export const readSession = () => request("/api/session");
+export const logIn = (email, password) =>
+  request("/api/session", json({ email, password }));
+export const listUsers = () => request("/api/users");
+export const createUser = (email, password) =>
+  request("/api/users", json({ email, password }));
+export const approveUser = (id) =>
+  request(`/api/users/${id}/approve`, { method: "POST" });
+export const revokeUser = (id) =>
+  request(`/api/users/${id}/revoke`, { method: "POST" });
+export const disableUser = (id) =>
+  request(`/api/users/${id}/disable`, { method: "POST" });
+
+export async function deleteUser(id) {
+  const response = await fetch(`/api/users/${id}`, { method: "DELETE" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || "could not delete that account");
+  }
+}
+
+export async function logOut() {
+  const response = await fetch("/api/session", { method: "DELETE" });
+  if (!response.ok) throw new Error("could not sign out");
+}
+
 export const listInputs = () => request("/api/inputs");
 export const listWorkspaces = () => request("/api/workspaces");
 export const getWorkspace = (id) => request(`/api/workspaces/${id}`);

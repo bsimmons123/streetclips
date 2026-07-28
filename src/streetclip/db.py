@@ -34,8 +34,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     title         TEXT,
     duration      REAL NOT NULL DEFAULT 0.0,
     poster_path   TEXT,
-    -- Not a real FK: `users` lives in Accounts' own database file, a
-    -- separate connection this table can't reference. See db.py's migrate().
+    -- Deliberately not an FK: Database can be initialized before Accounts has
+    -- created users, and the two modules own their migrations independently.
     user_id       INTEGER,
     created_at    REAL NOT NULL,
     updated_at    REAL NOT NULL
@@ -156,6 +156,14 @@ class Database:
         with self.connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_jobs_for_user(self, user_id: int) -> list[dict[str, Any]]:
+        """Every job owned by a user, including internal render jobs."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE user_id = ? ORDER BY id", (user_id,)
             ).fetchall()
         return [dict(r) for r in rows]
 

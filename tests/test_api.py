@@ -626,6 +626,29 @@ def test_delete_a_missing_workspace(env):
     assert client.delete("/api/workspaces/999").status_code == 404
 
 
+def test_delete_user_removes_owned_jobs_directories_and_upload(env):
+    client, db, input_dir, _, accounts = env
+    data_dir = input_dir.parent / "data"
+    target = accounts.create_user("target@x.com", hash_password("pw"), approved=True)
+    upload = data_dir / "uploads" / str(target) / "a.mp4"
+    upload.parent.mkdir(parents=True)
+    upload.write_bytes(b"video")
+    job_id = db.create_job(JobKind.ANALYZE, upload, "a.mp4", user_id=target)
+    job_dir = data_dir / f"job_{job_id:05d}"
+    job_dir.mkdir()
+
+    response = client.post(
+        "/api/session", json={"email": "admin@x.com", "password": "adminpw"}
+    )
+    assert response.status_code == 200
+    assert client.delete(f"/api/users/{target}").status_code == 204
+
+    assert accounts.get_user(target) is None
+    assert db.get_job(job_id) is None
+    assert not upload.exists()
+    assert not job_dir.exists()
+
+
 def test_transcript_returns_words_without_the_report(env, sample_video):
     client, db, _, user_id, _ = env
     job_id = _seed_done_job(db, sample_video, user_id)

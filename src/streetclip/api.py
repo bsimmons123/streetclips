@@ -140,6 +140,18 @@ def create_app(
         _owned(clip["job_id"], user)
         return clip
 
+    def _delete_job_and_files(job: dict[str, Any]) -> None:
+        source = Path(job["source_path"])
+        shared = workspaces_fs.source_is_shared(source, db.all_source_paths())
+        db.delete_job(job["id"])
+        workspaces_fs.delete_workspace(data_dir, job["id"])
+        if not shared and _within(source, data_dir / "uploads") and source.is_file():
+            source.unlink()
+
+    def _delete_user_data(user_id: int) -> None:
+        for job in db.list_jobs_for_user(user_id):
+            _delete_job_and_files(job)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if start_worker:
@@ -155,7 +167,7 @@ def create_app(
     app.state.settings = settings
     app.state.data_dir = data_dir
 
-    app.include_router(build_auth_router(accounts, settings))
+    app.include_router(build_auth_router(accounts, settings, _delete_user_data))
 
     # --- sources -------------------------------------------------------------
 
@@ -189,19 +201,7 @@ def create_app(
     @app.delete("/api/workspaces/{job_id}", status_code=204)
     def delete_workspace(job_id: int, user=Depends(current_user)) -> Response:
         job = _owned(job_id, user)
-
-        source = Path(job["source_path"])
-        # Read the paths BEFORE deleting: source_is_shared counts this job's
-        # own row, so a count of one means nothing else needs the file.
-        shared = workspaces_fs.source_is_shared(source, db.all_source_paths())
-
-        db.delete_job(job_id)
-        workspaces_fs.delete_workspace(data_dir, job_id)
-
-        # Only uploads are ours to remove. Files in the input directory are the
-        # operator's own recordings.
-        if not shared and _within(source, data_dir / "uploads") and source.is_file():
-            source.unlink()
+        _delete_job_and_files(job)
         return Response(status_code=204)
 
     @app.get("/api/workspaces/{job_id}/transcript")

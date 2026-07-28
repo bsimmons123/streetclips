@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "./api";
+import Login from "./Login";
+import Pending from "./Pending";
 import Review from "./Review";
 import SourcePicker from "./SourcePicker";
+import Users from "./Users";
 import WorkspaceList from "./WorkspaceList";
 
 const STAGES = {
@@ -37,6 +40,8 @@ function Progress({ job, onBack }) {
 }
 
 export default function App() {
+  const [session, setSession] = useState(undefined);
+  const [showUsers, setShowUsers] = useState(false);
   const [jobId, setJobId] = useState(null);
   const [job, setJob] = useState(null);
   const [renderId, setRenderId] = useState(null);
@@ -44,6 +49,17 @@ export default function App() {
   const [picking, setPicking] = useState(false);
 
   const fail = useCallback((err) => setError(err.message || String(err)), []);
+
+  const refreshSession = useCallback(() => {
+    return api
+      .readSession()
+      .then(setSession)
+      .catch(() => setSession(null));
+  }, []);
+
+  useEffect(() => {
+    refreshSession();
+  }, [refreshSession]);
 
   const refresh = useCallback(() => {
     if (jobId === null) return Promise.resolve();
@@ -113,8 +129,35 @@ export default function App() {
     setPicking(false);
   }
 
+  function signOut() {
+    api
+      .logOut()
+      .then(() => {
+        back();
+        setShowUsers(false);
+        setSession(null);
+      })
+      .catch(fail);
+  }
+
+  if (session === undefined) {
+    return (
+      <div className="progress">
+        <p className="stage">checking session…</p>
+      </div>
+    );
+  }
+  if (session === null) return <Login onSignedIn={setSession} />;
+  if (!session.approved) {
+    return (
+      <Pending email={session.email} onRefresh={refreshSession} onSignOut={signOut} />
+    );
+  }
+
   let body;
-  if (jobId === null && picking) {
+  if (showUsers) {
+    body = <Users currentUserId={session.id} onError={fail} />;
+  } else if (jobId === null && picking) {
     body = (
       <SourcePicker
         onStarted={(created) => {
@@ -154,7 +197,22 @@ export default function App() {
         </span>
         {job && <span className="source">{job.title || job.source_name}</span>}
         <span className="spacer" />
-        {(job || picking) && (
+        {session.is_admin && (
+          <button
+            className="btn ghost"
+            onClick={() => {
+              back();
+              setShowUsers((shown) => !shown);
+            }}
+          >
+            {showUsers ? "Workspaces" : "Accounts"}
+          </button>
+        )}
+        <span className="source account-email">{session.email}</span>
+        <button className="btn ghost" onClick={signOut}>
+          Sign out
+        </button>
+        {!showUsers && (job || picking) && (
           <button className="btn ghost" onClick={back}>
             Workspaces
           </button>
