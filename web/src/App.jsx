@@ -165,6 +165,7 @@ export default function App() {
         configured={false}
         onError={fail}
         onSaved={refreshSession}
+        onSignOut={signOut}
       />
     );
   }
@@ -174,8 +175,10 @@ export default function App() {
     body = (
       <ProviderKeys
         configured={session.keys_configured}
+        onBack={() => setPage("workspaces")}
         onError={fail}
         onSaved={() => refreshSession().then(() => setPage("workspaces"))}
+        onSignOut={signOut}
       />
     );
   } else if (page === "dashboard" && session.is_admin) {

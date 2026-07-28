@@ -933,6 +933,17 @@ select {
   border-radius: 8px;
 }
 
+.key-card-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -12px -12px 22px;
+}
+
+.key-card-actions .btn {
+  margin: 0;
+}
+
 .key-card h1 {
   margin: 4px 0 10px;
   font-family: var(--display);

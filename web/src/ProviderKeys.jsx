@@ -1,7 +1,13 @@
 import { useState } from "react";
 import * as api from "./api";
 
-export default function ProviderKeys({ configured, onError, onSaved }) {
+export default function ProviderKeys({
+  configured,
+  onBack,
+  onError,
+  onSaved,
+  onSignOut,
+}) {
   const [groq, setGroq] = useState("");
   const [anthropic, setAnthropic] = useState("");
   const [busy, setBusy] = useState(false);
@@ -19,6 +25,16 @@ export default function ProviderKeys({ configured, onError, onSaved }) {
   return (
     <main className="key-setup">
       <div className="key-card">
+        <div className="key-card-actions">
+          {onBack && (
+            <button className="btn ghost" type="button" onClick={onBack}>
+              ← Back to workspaces
+            </button>
+          )}
+          <button className="btn ghost" type="button" onClick={onSignOut}>
+            Sign out
+          </button>
+        </div>
         <p className="eyebrow">Personal provider keys</p>
         <h1>{configured ? "Update your API keys" : "Connect your API providers"}</h1>
         <p>
