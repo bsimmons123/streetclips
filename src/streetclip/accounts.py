@@ -6,12 +6,17 @@ same SQLite file; each owns its own tables.
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+# Sessions are bearer tokens. Thirty days balances not re-authenticating a
+# preacher every week against how long a stolen cookie stays useful.
+SESSION_TTL = 30 * 24 * 3600
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -125,3 +130,51 @@ class Accounts:
     def delete_user(self, user_id: int) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+    # --- sessions ------------------------------------------------------------
+
+    def create_session(self, user_id: int, ttl_seconds: float = SESSION_TTL) -> str:
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO sessions (id, user_id, created_at, expires_at, last_seen_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (token, user_id, now, now + ttl_seconds, now),
+            )
+        return token
+
+    def resolve_session(self, session_id: str) -> dict[str, Any] | None:
+        """The user behind a live session, or None.
+
+        Returns the user rather than the session because that is what every
+        caller wants, and it keeps the disabled check in one place.
+        """
+        if not session_id:
+            return None
+
+        now = time.time()
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id"
+                " WHERE s.id = ? AND s.expires_at > ? AND u.disabled_at IS NULL",
+                (session_id, now),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "UPDATE sessions SET last_seen_at = ? WHERE id = ?", (now, session_id)
+            )
+        return dict(row)
+
+    def delete_session(self, session_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+
+    def delete_user_sessions(self, user_id: int, keep: str | None = None) -> int:
+        """Log a user out everywhere. Returns how many sessions were killed."""
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND id IS NOT ?", (user_id, keep)
+            )
+            return cursor.rowcount
