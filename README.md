@@ -48,6 +48,38 @@ Back up that secret with the database. Non-admin source uploads are limited to
   exports are reachable on the host at
   `data/job_00001/shorts/01_confrontation_*.mp4` without going through the UI.
 
+### Linux bind-mount permissions
+
+The container runs as the unprivileged user with UID `10001`. If Docker creates
+`./data` as root, including on Alpine Linux hosts, startup fails with
+`sqlite3.OperationalError: unable to open database file`. Stop the service and
+give the container user ownership of the data directory:
+
+```sh
+docker compose down
+mkdir -p data input
+sudo chown -R 10001:10001 data
+sudo chmod -R u+rwX data
+docker compose up -d
+```
+
+To avoid host bind-mount permissions entirely, replace `./data:/data` with a
+Docker-managed volume:
+
+```yaml
+services:
+  streetclip:
+    volumes:
+      - ./input:/input:ro
+      - streetclip-data:/data
+
+volumes:
+  streetclip-data:
+```
+
+The managed-volume option makes exports less convenient to access directly from
+the host.
+
 ### Transcription backend
 
 `STREETCLIP_TRANSCRIBE_BACKEND=groq` (default) sends audio to Groq's
