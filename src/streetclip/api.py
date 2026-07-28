@@ -106,9 +106,18 @@ def create_app(
     input_dir = Path(settings.input_dir)
 
     accounts = Accounts(data_dir / "streetclip.db")
+    # Captured before bootstrap_admin runs: it is the only reliable signal
+    # that this boot is the one creating the very first account. On every
+    # later boot the admin already exists, so this is non-empty and the
+    # backfill below is skipped — bootstrap_admin's return value can't tell
+    # "just created" from "already existed" (deliberately, so a restart
+    # never resets the admin's password), so the call site checks this
+    # instead of the returned id.
+    no_accounts_yet = not accounts.list_users()
     admin_id = bootstrap_admin(accounts, settings)
-    if admin_id is not None:
-        # Workspaces that predate accounts become the admin's.
+    if admin_id is not None and no_accounts_yet:
+        # One-time migration: workspaces that predate accounts become the
+        # first admin's. Runs only on the boot that creates that admin.
         db.backfill_owner(admin_id)
 
     current_user, approved_user, _admin_user = make_dependencies(accounts)

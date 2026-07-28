@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -91,25 +92,42 @@ def test_unsatisfiable_or_absent_ranges_fall_back():
 # --- session guard -------------------------------------------------------------
 
 
+# The only /api/* routes that must work with no session at all. Anything not
+# in this set is expected to 401 — adding to it is a deliberate, visible
+# decision, not a side effect of some other change.
+PUBLIC_API_ROUTES = {("POST", "/api/session"), ("POST", "/api/signup")}
+
+
 def test_every_api_route_requires_a_session(env):
-    """The check that stops the next endpoint shipping unprotected."""
+    """Sweeps every registered /api/* route so a newly added endpoint that
+    forgets its auth dependency fails this test instead of shipping unguarded.
+    """
     client, _, _, _, _ = env
     client.cookies.clear()
 
-    for path, method in [
-        ("/api/inputs", "get"),
-        ("/api/workspaces", "get"),
-        ("/api/workspaces/1", "get"),
-        ("/api/workspaces/1/transcript", "get"),
-        ("/api/workspaces/1/poster", "get"),
-        ("/api/workspaces/1/source", "get"),
-        ("/api/workspaces/1/render", "post"),
-        ("/api/clips/1", "patch"),
-        ("/api/clips/1/download", "get"),
-    ]:
-        kwargs = {"json": {}} if method == "patch" else {}
-        response = getattr(client, method)(path, **kwargs)
-        assert response.status_code == 401, f"{method.upper()} {path} is unprotected"
+    checked = 0
+    for route in client.app.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        if not path or not path.startswith("/api/") or not methods:
+            continue
+
+        concrete_path = re.sub(r"\{[^{}]+\}", "1", path)
+        for method in methods:
+            if method in ("HEAD", "OPTIONS"):
+                continue
+            if (method, path) in PUBLIC_API_ROUTES:
+                continue
+
+            checked += 1
+            # client.request(), not client.get()/.delete(): those two don't
+            # accept `json=`, and a body-less request is fine for every route
+            # here since the auth dependency runs before body validation.
+            response = client.request(method, concrete_path, json={})
+            assert response.status_code == 401, f"{method} {concrete_path} is unprotected"
+
+    # A sweep that silently matches nothing is worse than no test at all.
+    assert checked >= 14, f"expected to sweep at least 14 routes, found {checked}"
 
 
 def test_another_users_workspace_is_404_not_403(env):
