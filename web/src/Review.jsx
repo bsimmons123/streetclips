@@ -38,7 +38,7 @@ function Bound({ label, value, onNudge, disabled }) {
   );
 }
 
-export default function Review({ job, onPatchClip, onExport, exporting, onBack }) {
+export default function Review({ canExport = true, job, onPatchClip, onExport, exporting, onBack }) {
   const clips = job.clips;
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -268,13 +268,17 @@ export default function Review({ job, onPatchClip, onExport, exporting, onBack }
           </div>
         )}
         <span className="spacer" />
-        <button
-          className="btn primary"
-          disabled={exporting || kept.length === 0}
-          onClick={onExport}
-        >
-          {exporting ? "Exporting…" : `Export ${kept.length || ""}`.trim()}
-        </button>
+        {canExport ? (
+          <button
+            className="btn primary"
+            disabled={exporting || kept.length === 0}
+            onClick={onExport}
+          >
+            {exporting ? "Exporting…" : `Export ${kept.length || ""}`.trim()}
+          </button>
+        ) : (
+          <span className="read-only-note">Admin access is required to export.</span>
+        )}
       </div>
     </>
   );

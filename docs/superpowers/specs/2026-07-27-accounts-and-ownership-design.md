@@ -29,6 +29,12 @@ them separately would migrate it twice.
 **Explicitly out of scope:** rate limiting, upload quotas, TLS termination,
 password reset, email of any kind, per-user API keys.
 
+> **2026-07-28 addendum:** Upload quotas and per-user provider keys were brought
+> into scope after implementation. Approved non-admins must configure encrypted
+> personal Groq and Anthropic keys and have a 15 GiB stored-upload quota. An
+> admin may grant a separate unlimited-storage override. Admin jobs alone use
+> the server environment keys.
+
 ## What this does and does not make safe
 
 This makes the app **multi-user**. It does not make it safe to expose publicly.

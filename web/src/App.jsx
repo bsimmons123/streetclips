@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "./api";
+import Dashboard from "./Dashboard";
 import Login from "./Login";
 import Pending from "./Pending";
+import ProviderKeys from "./ProviderKeys";
 import Review from "./Review";
 import SourcePicker from "./SourcePicker";
 import Users from "./Users";
@@ -41,7 +43,7 @@ function Progress({ job, onBack }) {
 
 export default function App() {
   const [session, setSession] = useState(undefined);
-  const [showUsers, setShowUsers] = useState(false);
+  const [page, setPage] = useState("workspaces");
   const [jobId, setJobId] = useState(null);
   const [job, setJob] = useState(null);
   const [renderId, setRenderId] = useState(null);
@@ -60,6 +62,10 @@ export default function App() {
   useEffect(() => {
     refreshSession();
   }, [refreshSession]);
+
+  useEffect(() => {
+    if (session?.is_admin) setPage("dashboard");
+  }, [session?.id, session?.is_admin]);
 
   const refresh = useCallback(() => {
     if (jobId === null) return Promise.resolve();
@@ -134,7 +140,7 @@ export default function App() {
       .logOut()
       .then(() => {
         back();
-        setShowUsers(false);
+        setPage("workspaces");
         setSession(null);
       })
       .catch(fail);
@@ -153,9 +159,37 @@ export default function App() {
       <Pending email={session.email} onRefresh={refreshSession} onSignOut={signOut} />
     );
   }
+  if (!session.is_admin && !session.keys_configured) {
+    return (
+      <ProviderKeys
+        configured={false}
+        onError={fail}
+        onSaved={refreshSession}
+      />
+    );
+  }
 
   let body;
-  if (showUsers) {
+  if (page === "keys" && !session.is_admin) {
+    body = (
+      <ProviderKeys
+        configured={session.keys_configured}
+        onError={fail}
+        onSaved={() => refreshSession().then(() => setPage("workspaces"))}
+      />
+    );
+  } else if (page === "dashboard" && session.is_admin) {
+    body = (
+      <Dashboard
+        onError={fail}
+        onNew={() => {
+          setPage("workspaces");
+          setPicking(true);
+        }}
+        onWorkspaces={() => setPage("workspaces")}
+      />
+    );
+  } else if (page === "users" && session.is_admin) {
     body = <Users currentUserId={session.id} onError={fail} />;
   } else if (jobId === null && picking) {
     body = (
@@ -168,7 +202,14 @@ export default function App() {
       />
     );
   } else if (jobId === null) {
-    body = <WorkspaceList onOpen={setJobId} onNew={() => setPicking(true)} onError={fail} />;
+    body = (
+      <WorkspaceList
+        canCreate={session.is_admin || session.keys_configured}
+        onOpen={setJobId}
+        onNew={() => setPicking(true)}
+        onError={fail}
+      />
+    );
   } else if (job === null) {
     body = (
       <div className="progress">
@@ -180,6 +221,7 @@ export default function App() {
   } else {
     body = (
       <Review
+        canExport={session.is_admin || session.keys_configured}
         job={job}
         onPatchClip={patchClip}
         onExport={exportKept}
@@ -192,27 +234,69 @@ export default function App() {
   return (
     <div className="shell">
       <div className="topbar">
-        <span className="wordmark">
+        <button
+          className="wordmark"
+          onClick={() => {
+            back();
+            setPage(session.is_admin ? "dashboard" : "workspaces");
+          }}
+        >
           street<span>clip</span>
-        </span>
+        </button>
         {job && <span className="source">{job.title || job.source_name}</span>}
-        <span className="spacer" />
         {session.is_admin && (
-          <button
-            className="btn ghost"
-            onClick={() => {
-              back();
-              setShowUsers((shown) => !shown);
-            }}
-          >
-            {showUsers ? "Workspaces" : "Accounts"}
-          </button>
+          <nav className="main-nav" aria-label="Main navigation">
+            <button
+              className={page === "dashboard" ? "active" : ""}
+              onClick={() => {
+                back();
+                setPage("dashboard");
+              }}
+            >
+              Dashboard
+            </button>
+            <button
+              className={page === "workspaces" ? "active" : ""}
+              onClick={() => {
+                back();
+                setPage("workspaces");
+              }}
+            >
+              Workspaces
+            </button>
+            <button
+              className={page === "users" ? "active" : ""}
+              onClick={() => {
+                back();
+                setPage("users");
+              }}
+            >
+              Accounts
+            </button>
+          </nav>
         )}
+        {!session.is_admin && (
+          <nav className="main-nav" aria-label="Main navigation">
+            <button
+              className={page === "workspaces" ? "active" : ""}
+              onClick={() => setPage("workspaces")}
+            >
+              Workspaces
+            </button>
+            <button
+              className={page === "keys" ? "active" : ""}
+              onClick={() => setPage("keys")}
+            >
+              API keys
+            </button>
+          </nav>
+        )}
+        <span className="spacer" />
         <span className="source account-email">{session.email}</span>
         <button className="btn ghost" onClick={signOut}>
           Sign out
         </button>
-        {!showUsers && (job || picking) && (
+        {page === "workspaces" && (job || picking) && (
           <button className="btn ghost" onClick={back}>
             Workspaces
           </button>

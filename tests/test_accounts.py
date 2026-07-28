@@ -62,6 +62,17 @@ def test_disable_marks_the_account(accounts: Accounts):
     assert accounts.get_user(user)["disabled_at"] is not None
 
 
+def test_quota_override_and_encrypted_keys_are_stored(accounts: Accounts):
+    user = accounts.create_user("user@x.com", "h")
+    accounts.set_quota_unlimited(user, True)
+    accounts.set_provider_keys(user, "encrypted-groq", "encrypted-anthropic")
+
+    row = accounts.get_user(user)
+    assert row["quota_unlimited"] == 1
+    assert row["groq_key_encrypted"] == "encrypted-groq"
+    assert row["anthropic_key_encrypted"] == "encrypted-anthropic"
+
+
 def test_list_users_puts_pending_first(accounts: Accounts):
     accounts.create_user("approved@x.com", "h", approved=True)
     accounts.create_user("pending@x.com", "h")

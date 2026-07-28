@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS users (
     approved_at   REAL,
     approved_by   INTEGER REFERENCES users(id),
     disabled_at   REAL,
+    quota_unlimited INTEGER NOT NULL DEFAULT 0,
+    groq_key_encrypted TEXT,
+    anthropic_key_encrypted TEXT,
     created_at    REAL NOT NULL
 );
 
@@ -64,6 +67,14 @@ class Accounts:
     def migrate(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            existing = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+            for name, declaration in (
+                ("quota_unlimited", "INTEGER NOT NULL DEFAULT 0"),
+                ("groq_key_encrypted", "TEXT"),
+                ("anthropic_key_encrypted", "TEXT"),
+            ):
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE users ADD COLUMN {name} {declaration}")
 
     # --- users ---------------------------------------------------------------
 
@@ -125,6 +136,23 @@ class Accounts:
         with self.connect() as conn:
             conn.execute(
                 "UPDATE users SET disabled_at = ? WHERE id = ?", (time.time(), user_id)
+            )
+
+    def set_quota_unlimited(self, user_id: int, unlimited: bool) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE users SET quota_unlimited = ? WHERE id = ?",
+                (int(unlimited), user_id),
+            )
+
+    def set_provider_keys(
+        self, user_id: int, groq_encrypted: str, anthropic_encrypted: str
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE users SET groq_key_encrypted = ?, anthropic_key_encrypted = ?"
+                " WHERE id = ?",
+                (groq_encrypted, anthropic_encrypted, user_id),
             )
 
     def delete_user(self, user_id: int) -> None:

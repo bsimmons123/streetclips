@@ -21,7 +21,7 @@ downstream stage is testable against a canned transcript with no network.
 ## Running with Docker
 
 ```sh
-cp .env.example .env      # add at least STREETCLIP_ANTHROPIC_API_KEY
+cp .env.example .env      # add the admin's provider keys and credentials
 mkdir -p input data
 cp /path/to/recording.mp4 input/
 docker compose up -d
@@ -29,6 +29,12 @@ docker compose up -d
 
 Open `http://<host>:8080`, pick the recording, wait for the queue to fill, keep
 the clips you want, hit Export.
+
+Approved non-admin accounts configure their own Groq and Anthropic keys in the
+UI. Those credentials are encrypted with the configured key-encryption secret,
+or a protected installation secret created inside `data/` when it is blank.
+Back up that secret with the database. Non-admin source uploads are limited to
+15 GiB unless an admin grants an unlimited-storage override.
 
 - `./input` is mounted read-only and is the only directory a job may be
   submitted from by path. Uploads through the browser land in `./data/uploads`.

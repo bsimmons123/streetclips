@@ -13,10 +13,12 @@ import traceback
 from pathlib import Path
 
 from streetclip import workspaces
+from streetclip.accounts import Accounts
 from streetclip.config import Settings, get_settings
 from streetclip.db import Database, JobKind, JobStatus
 from streetclip.models import Candidate, Category, Report
 from streetclip.pipeline import ingest, run
+from streetclip.provider_keys import ProviderKeyVault
 
 log = logging.getLogger(__name__)
 
@@ -40,11 +42,15 @@ class Worker:
         db: Database,
         data_dir: Path,
         settings: Settings | None = None,
+        accounts: Accounts | None = None,
+        key_vault: ProviderKeyVault | None = None,
         poll_seconds: float = 0.5,
     ) -> None:
         self.db = db
         self.data_dir = data_dir
         self.settings = settings or get_settings()
+        self.accounts = accounts
+        self.key_vault = key_vault
         self.poll_seconds = poll_seconds
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -93,8 +99,20 @@ class Worker:
     def job_dir(self, job_id: int) -> Path:
         return workspaces.job_dir(self.data_dir, job_id)
 
+    def settings_for(self, job: dict) -> Settings:
+        if self.accounts is None or self.key_vault is None or job["user_id"] is None:
+            return self.settings
+        user = self.accounts.get_user(job["user_id"])
+        if user is None or user["is_admin"]:
+            return self.settings
+        groq, anthropic = self.key_vault.get(user)
+        return self.settings.model_copy(
+            update={"groq_api_key": groq, "anthropic_api_key": anthropic}
+        )
+
     def _analyze(self, job: dict) -> None:
         job_id = job["id"]
+        job_settings = self.settings_for(job)
 
         def progress(stage: str, fraction: float) -> None:
             self.db.update_progress(job_id, stage, fraction)
@@ -102,7 +120,7 @@ class Worker:
         report = run.analyze(
             Path(job["source_path"]),
             work_dir=self.job_dir(job_id) / "work",
-            settings=self.settings,
+            settings=job_settings,
             progress=progress,
         )
 
@@ -115,7 +133,7 @@ class Worker:
                 Path(job["source_path"]),
                 workspaces.poster_path(self.data_dir, job_id),
                 at=min(10.0, report.media.duration / 10),
-                settings=self.settings,
+                settings=job_settings,
             )
             poster = str(workspaces.poster_path(self.data_dir, job_id))
         except Exception:

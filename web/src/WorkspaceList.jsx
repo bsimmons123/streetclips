@@ -8,7 +8,7 @@ const STATUS_LABEL = {
   failed: "failed",
 };
 
-export default function WorkspaceList({ onOpen, onNew, onError }) {
+export default function WorkspaceList({ canCreate, onOpen, onNew, onError }) {
   const [rows, setRows] = useState(null);
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState("");
@@ -49,13 +49,27 @@ export default function WorkspaceList({ onOpen, onNew, onError }) {
     <div className="home">
       <div className="home-head">
         <h1>Workspaces</h1>
-        <button className="btn primary" onClick={onNew}>
-          + New recording
-        </button>
+        {canCreate && (
+          <button className="btn primary" onClick={onNew}>
+            + New recording
+          </button>
+        )}
       </div>
 
       {rows && rows.length === 0 && (
-        <p className="empty">Nothing here yet. Add a recording to get started.</p>
+        <div className="empty-state">
+          <strong>No workspaces yet</strong>
+          <p>
+            {canCreate
+              ? "Upload a recording to begin finding clips."
+              : "This account has read-only access and no existing workspaces."}
+          </p>
+          {canCreate && (
+            <button className="btn primary" onClick={onNew}>
+              Upload your first recording
+            </button>
+          )}
+        </div>
       )}
 
       <div className="workspace-grid">

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from streetclip.accounts import Accounts
 from streetclip.auth import bootstrap_admin, make_dependencies
 from streetclip.config import Settings, get_settings
 from streetclip.db import Database, JobKind, JobStatus
+from streetclip.provider_keys import ProviderKeyVault
 from streetclip.ranged import ranged_file_response
 from streetclip.routes_auth import build_auth_router
 from streetclip.worker import Worker, enqueue_render
@@ -27,6 +29,7 @@ VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".m4v", ".avi", ".webm", ".mpg", ".mpe
 # How often the SSE endpoint re-reads job state. Fast enough to feel live,
 # slow enough that a long analysis doesn't hammer SQLite.
 POLL_SECONDS = 0.5
+USER_UPLOAD_QUOTA = 15 * 1024**3
 
 
 class ClipUpdate(BaseModel):
@@ -102,10 +105,17 @@ def create_app(
     data_dir.mkdir(parents=True, exist_ok=True)
 
     db = Database(data_dir / "streetclip.db")
-    worker = Worker(db, data_dir, settings=settings)
     input_dir = Path(settings.input_dir)
 
     accounts = Accounts(data_dir / "streetclip.db")
+    key_vault = ProviderKeyVault(
+        accounts,
+        settings.key_encryption_secret,
+        data_dir / ".provider-key-secret",
+    )
+    worker = Worker(
+        db, data_dir, settings=settings, accounts=accounts, key_vault=key_vault
+    )
     # Captured before bootstrap_admin runs: it is the only reliable signal
     # that this boot is the one creating the very first account. On every
     # later boot the admin already exists, so this is non-empty and the
@@ -120,7 +130,14 @@ def create_app(
         # first admin's. Runs only on the boot that creates that admin.
         db.backfill_owner(admin_id)
 
-    current_user, approved_user, _admin_user = make_dependencies(accounts)
+    current_user, _approved_user, admin_user = make_dependencies(accounts)
+
+    def resource_user(user=Depends(current_user)):
+        if user["approved_at"] is None:
+            raise HTTPException(403, "this account is awaiting approval")
+        if not user["is_admin"] and not key_vault.configured(user):
+            raise HTTPException(403, "add personal Groq and Anthropic keys first")
+        return user
 
     def _owned(job_id: int, user: dict[str, Any]) -> dict[str, Any]:
         """The job, if this user owns it.
@@ -167,7 +184,9 @@ def create_app(
     app.state.settings = settings
     app.state.data_dir = data_dir
 
-    app.include_router(build_auth_router(accounts, settings, _delete_user_data))
+    app.include_router(
+        build_auth_router(accounts, settings, _delete_user_data, key_vault)
+    )
 
     # --- sources -------------------------------------------------------------
 
@@ -190,6 +209,26 @@ def create_app(
     def list_workspaces(user=Depends(current_user)) -> list[dict[str, Any]]:
         """Analyze jobs with their clip tallies. Render jobs stay internal."""
         return [workspace_payload(w) for w in db.list_workspaces(user["id"])]
+
+    @app.get("/api/dashboard")
+    def dashboard(admin=Depends(admin_user)) -> dict[str, int]:
+        jobs = db.list_jobs_for_user(admin["id"])
+        analyses = [job for job in jobs if job["kind"] == JobKind.ANALYZE]
+        uploads_dir = data_dir / "uploads" / str(admin["id"])
+        uploaded = [
+            job for job in analyses if _within(Path(job["source_path"]), uploads_dir)
+        ]
+        return {
+            "uploads": len(uploaded),
+            "workspaces": len(analyses),
+            "completed": sum(job["status"] == JobStatus.DONE for job in analyses),
+            "processing": sum(
+                job["status"] in (JobStatus.QUEUED, JobStatus.RUNNING)
+                for job in analyses
+            ),
+            "failed": sum(job["status"] == JobStatus.FAILED for job in analyses),
+            "exports": sum(job["kind"] == JobKind.RENDER for job in jobs),
+        }
 
     @app.patch("/api/workspaces/{job_id}")
     def rename_workspace(
@@ -231,7 +270,7 @@ def create_app(
         return FileResponse(path, media_type="image/jpeg")
 
     @app.post("/api/workspaces", status_code=201)
-    def create_job(request: JobRequest, user=Depends(approved_user)) -> dict[str, Any]:
+    def create_job(request: JobRequest, user=Depends(resource_user)) -> dict[str, Any]:
         """Analyze a file already on disk, picked from the input directory."""
         source = Path(request.path).expanduser()
         if not source.is_file():
@@ -245,17 +284,32 @@ def create_app(
         return workspace_payload(db.get_job(job_id))
 
     @app.post("/api/workspaces/upload", status_code=201)
-    async def upload_job(file: UploadFile, user=Depends(approved_user)) -> dict[str, Any]:
+    async def upload_job(file: UploadFile, user=Depends(resource_user)) -> dict[str, Any]:
         """Analyze an uploaded file."""
         name = Path(file.filename or "upload.mp4").name
         uploads = data_dir / "uploads" / str(user["id"])
         uploads.mkdir(parents=True, exist_ok=True)
         dest = uploads / name
+        used = sum(
+            path.stat().st_size
+            for path in uploads.rglob("*")
+            if path.is_file() and path != dest
+        )
+        quota = None if user["is_admin"] or user["quota_unlimited"] else USER_UPLOAD_QUOTA
+        written = 0
+        partial = uploads / f".{name}.{secrets.token_hex(8)}.part"
 
-        with dest.open("wb") as handle:
-            # Streamed rather than read whole: these files run to gigabytes.
-            while chunk := await file.read(1024 * 1024):
-                handle.write(chunk)
+        try:
+            with partial.open("wb") as handle:
+                while chunk := await file.read(1024 * 1024):
+                    written += len(chunk)
+                    if quota is not None and used + written > quota:
+                        raise HTTPException(413, "15 GB upload quota exceeded")
+                    handle.write(chunk)
+            partial.replace(dest)
+        except Exception:
+            partial.unlink(missing_ok=True)
+            raise
 
         job_id = db.create_job(JobKind.ANALYZE, dest, name, user_id=user["id"])
         return workspace_payload(db.get_job(job_id))
@@ -314,7 +368,7 @@ def create_app(
         return ranged_file_response(source, request.headers.get("range", ""))
 
     @app.post("/api/workspaces/{job_id}/render", status_code=201)
-    def render_job(job_id: int, user=Depends(approved_user)) -> dict[str, Any]:
+    def render_job(job_id: int, user=Depends(resource_user)) -> dict[str, Any]:
         _owned(job_id, user)
         try:
             render_id = enqueue_render(db, job_id)

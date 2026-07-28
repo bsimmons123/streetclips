@@ -30,12 +30,15 @@ def env(tmp_path: Path):
         input_dir=str(input_dir),
         admin_email="admin@x.com",
         admin_password="adminpw",
+        key_encryption_secret="test-encryption-secret",
     )
     app = create_app(settings, data_dir=data_dir, start_worker=False)
     accounts = Accounts(data_dir / "streetclip.db")
     db = Database(data_dir / "streetclip.db")
 
-    user_id = accounts.create_user("me@x.com", hash_password("pw"), approved=True)
+    user_id = accounts.create_user(
+        "me@x.com", hash_password("pw"), is_admin=True, approved=True
+    )
     with TestClient(app) as client:
         client.cookies.set(COOKIE_NAME, accounts.create_session(user_id))
         yield client, db, input_dir, user_id, accounts
@@ -166,6 +169,95 @@ def test_a_pending_user_cannot_spend_resources(env, tmp_path: Path):
         "/api/workspaces/upload", files={"file": ("s.mp4", b"x", "video/mp4")}
     )
     assert upload.status_code == 403
+
+
+def test_an_approved_non_admin_cannot_spend_resources(env):
+    client, db, input_dir, _, accounts = env
+    user_id = accounts.create_user("member@x.com", hash_password("pw"), approved=True)
+    client.cookies.set(COOKIE_NAME, accounts.create_session(user_id))
+    source = input_dir / "s.mp4"
+    source.write_bytes(b"x")
+    job_id = db.create_job(JobKind.ANALYZE, source, source.name, user_id=user_id)
+
+    assert client.post("/api/workspaces", json={"path": str(source)}).status_code == 403
+    assert (
+        client.post(
+            "/api/workspaces/upload", files={"file": ("s.mp4", b"x", "video/mp4")}
+        ).status_code
+        == 403
+    )
+    assert client.post(f"/api/workspaces/{job_id}/render").status_code == 403
+
+
+def test_an_approved_non_admin_with_personal_keys_can_upload(env):
+    client, _, _, _, accounts = env
+    user_id = accounts.create_user("member@x.com", hash_password("pw"), approved=True)
+    client.cookies.set(COOKIE_NAME, accounts.create_session(user_id))
+    saved = client.put(
+        "/api/session/keys",
+        json={"groq": "personal-groq", "anthropic": "personal-anthropic"},
+    )
+
+    response = client.post(
+        "/api/workspaces/upload", files={"file": ("mine.mp4", b"x", "video/mp4")}
+    )
+
+    assert saved.status_code == 204
+    assert response.status_code == 201
+    row = accounts.get_user(user_id)
+    assert "personal-groq" not in row["groq_key_encrypted"]
+
+
+def test_non_admin_upload_quota_is_enforced(env, monkeypatch):
+    import streetclip.api as api_module
+
+    monkeypatch.setattr(api_module, "USER_UPLOAD_QUOTA", 1)
+    client, _, _, _, accounts = env
+    user_id = accounts.create_user("member@x.com", hash_password("pw"), approved=True)
+    client.cookies.set(COOKIE_NAME, accounts.create_session(user_id))
+    client.put(
+        "/api/session/keys",
+        json={"groq": "personal-groq", "anthropic": "personal-anthropic"},
+    )
+
+    response = client.post(
+        "/api/workspaces/upload", files={"file": ("large.mp4", b"xx", "video/mp4")}
+    )
+
+    assert response.status_code == 413
+
+
+def test_admin_can_grant_unlimited_quota(env):
+    client, _, _, _, accounts = env
+    target = accounts.create_user("member@x.com", hash_password("pw"), approved=True)
+    client.post("/api/session", json={"email": "admin@x.com", "password": "adminpw"})
+
+    response = client.post(f"/api/users/{target}/quota", json={"unlimited": True})
+
+    assert response.status_code == 200
+    assert response.json()["quota_unlimited"] is True
+
+
+def test_admin_dashboard_counts_uploads_and_processing(env):
+    client, db, input_dir, user_id, _ = env
+    upload = input_dir.parent / "data" / "uploads" / str(user_id) / "a.mp4"
+    upload.parent.mkdir(parents=True)
+    upload.write_bytes(b"x")
+    complete = db.create_job(JobKind.ANALYZE, upload, upload.name, user_id=user_id)
+    db.finish_job(complete)
+    db.create_job(JobKind.ANALYZE, input_dir / "b.mp4", "b.mp4", user_id=user_id)
+
+    response = client.get("/api/dashboard")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "uploads": 1,
+        "workspaces": 2,
+        "completed": 1,
+        "processing": 1,
+        "failed": 0,
+        "exports": 0,
+    }
 
 
 def test_a_pending_user_can_still_read(env):

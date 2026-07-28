@@ -18,6 +18,7 @@ from streetclip.auth import (
     verify_password,
 )
 from streetclip.config import Settings
+from streetclip.provider_keys import KeyEncryptionNotConfigured, ProviderKeyVault
 
 # Deliberately identical for a wrong password and an unknown address, so the
 # response cannot be used to discover which accounts exist.
@@ -39,6 +40,15 @@ class PasswordChange(BaseModel):
     new: str = Field(min_length=8)
 
 
+class ProviderKeys(BaseModel):
+    groq: str = Field(min_length=1)
+    anthropic: str = Field(min_length=1)
+
+
+class QuotaOverride(BaseModel):
+    unlimited: bool
+
+
 def user_payload(row: dict[str, Any]) -> dict[str, Any]:
     """Never includes password_hash."""
     return {
@@ -47,6 +57,10 @@ def user_payload(row: dict[str, Any]) -> dict[str, Any]:
         "is_admin": bool(row["is_admin"]),
         "approved": row["approved_at"] is not None,
         "disabled": row["disabled_at"] is not None,
+        "keys_configured": bool(
+            row.get("groq_key_encrypted") and row.get("anthropic_key_encrypted")
+        ),
+        "quota_unlimited": bool(row.get("quota_unlimited")),
         "created_at": row["created_at"],
     }
 
@@ -55,6 +69,7 @@ def build_auth_router(
     accounts: Accounts,
     settings: Settings,
     delete_user_data: Callable[[int], None] | None = None,
+    key_vault: ProviderKeyVault | None = None,
 ) -> APIRouter:
     router = APIRouter()
     current_user, _approved_user, admin_user = make_dependencies(accounts)
@@ -106,6 +121,20 @@ def build_auth_router(
         accounts.delete_user_sessions(user["id"], keep=session)
         return Response(status_code=204)
 
+    @router.put("/api/session/keys", status_code=204)
+    def save_provider_keys(
+        keys: ProviderKeys, user=Depends(current_user)
+    ) -> Response:
+        if user["is_admin"]:
+            raise HTTPException(409, "admin accounts use server provider keys")
+        if key_vault is None:
+            raise HTTPException(503, "personal key storage is unavailable")
+        try:
+            key_vault.set(user["id"], keys.groq, keys.anthropic)
+        except KeyEncryptionNotConfigured as exc:
+            raise HTTPException(503, str(exc)) from exc
+        return Response(status_code=204)
+
     # --- admin ---------------------------------------------------------------
 
     @router.get("/api/users")
@@ -143,6 +172,16 @@ def build_auth_router(
         accounts.set_disabled(user_id)
         # Disabling has to take effect now, not when the cookie expires.
         accounts.delete_user_sessions(user_id, keep=None)
+        return user_payload(accounts.get_user(user_id))
+
+    @router.post("/api/users/{user_id}/quota")
+    def set_quota(
+        user_id: int, override: QuotaOverride, admin=Depends(admin_user)
+    ) -> dict[str, Any]:
+        target = accounts.get_user(user_id)
+        if target is None:
+            raise HTTPException(404, "no such account")
+        accounts.set_quota_unlimited(user_id, override.unlimited)
         return user_payload(accounts.get_user(user_id))
 
     @router.delete("/api/users/{user_id}", status_code=204)

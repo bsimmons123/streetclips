@@ -38,7 +38,10 @@ def test_login_sets_a_cookie(env):
 
 def test_login_never_returns_the_hash(env):
     client, _, _ = env
-    assert "password_hash" not in _login(client, "admin@x.com", "adminpw").json()
+    body = _login(client, "admin@x.com", "adminpw").json()
+    assert "password_hash" not in body
+    assert "groq_key_encrypted" not in body
+    assert "anthropic_key_encrypted" not in body
 
 
 def test_a_wrong_password_is_401(env):
@@ -130,6 +133,7 @@ def test_a_non_admin_cannot_list_users(env):
         ("post", "/api/users/{user_id}/approve", {}),
         ("post", "/api/users/{user_id}/revoke", {}),
         ("post", "/api/users/{user_id}/disable", {}),
+        ("post", "/api/users/{user_id}/quota", {"json": {"unlimited": True}}),
         ("delete", "/api/users/{user_id}", {}),
     ],
 )

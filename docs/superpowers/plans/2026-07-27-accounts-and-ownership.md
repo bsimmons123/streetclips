@@ -12,6 +12,13 @@ fallback, and the Docker healthcheck. The live database has one approved admin,
 six owned jobs, and no ownerless jobs; the deployed multi-user isolation,
 revocation, deletion, and authentication checks pass.
 
+**Post-plan access update:** Approved non-admins may process only after storing
+their own Groq and Anthropic keys. The keys are encrypted at rest with a
+per-installation secret and never returned by the API. Non-admin uploads are
+capped at 15 GiB of stored source video unless an admin grants the separate
+unlimited-storage override. Admin jobs continue to use server environment keys.
+The admin UI includes processing metrics, key readiness, and quota controls.
+
 **Architecture:** Accounts live in two new modules rather than being bolted onto `db.py` (356 lines) and `api.py` (343 lines): `accounts.py` owns the users and sessions tables, `auth.py` owns hashing, cookies, and the FastAPI dependencies. Authorization is one rule — you may act on a workspace you own — enforced by a dependency on every route, with a route-table test that fails when a new endpoint forgets it.
 
 **Tech Stack:** Python 3.12, FastAPI, SQLite, argon2-cffi, React 18, Vite.
@@ -28,7 +35,7 @@ revocation, deletion, and authentication checks pass.
 - **An unapproved account returns 403, never 404**, on the three resource routes.
 - Passwords are hashed with argon2id via `argon2-cffi`. Never bcrypt, never a bare hash.
 - A password hash must never appear in any response body.
-- Out of scope, do not build: rate limiting, upload quotas, TLS, password reset, email, per-user API keys.
+- Still out of scope: rate limiting, TLS, password reset, and email.
 
 ## File Structure
 

@@ -70,6 +70,8 @@ export default function Users({ currentUserId, onError }) {
             <span className="size">
               {user.disabled ? "disabled" : user.approved ? "approved" : "pending"}
               {user.is_admin && " · admin"}
+              {!user.is_admin && (user.keys_configured ? " · keys ready" : " · keys missing")}
+              {!user.is_admin && (user.quota_unlimited ? " · unlimited" : " · 15 GB")}
             </span>
             {!user.approved && !user.disabled && (
               <button
@@ -105,6 +107,17 @@ export default function Users({ currentUserId, onError }) {
                 onClick={() => remove(user)}
               >
                 Delete
+              </button>
+            )}
+            {!user.is_admin && (
+              <button
+                className="btn ghost"
+                disabled={busy}
+                onClick={() =>
+                  act(api.setQuotaUnlimited(user.id, !user.quota_unlimited))
+                }
+              >
+                {user.quota_unlimited ? "Use 15 GB limit" : "Grant unlimited"}
               </button>
             )}
           </div>

@@ -8,6 +8,7 @@ import pytest
 from streetclip.config import Settings
 from streetclip.db import Database, JobKind, JobStatus
 from streetclip.models import Candidate, Category, MediaInfo, Report, Transcript, Word
+from streetclip.provider_keys import ProviderKeyVault
 from streetclip.worker import Worker, clip_to_candidate, enqueue_render
 
 from .conftest import needs_ffmpeg
@@ -32,6 +33,32 @@ def _settings(**overrides) -> Settings:
     }
     base.update(overrides)
     return Settings(**base)
+
+
+def test_non_admin_jobs_use_personal_provider_keys(tmp_path: Path):
+    from streetclip.accounts import Accounts
+
+    path = tmp_path / "db.sqlite"
+    accounts = Accounts(path)
+    db = Database(path)
+    user_id = accounts.create_user("member@x.com", "hash", approved=True)
+    vault = ProviderKeyVault(accounts, "encryption-secret")
+    vault.set(user_id, "personal-groq", "personal-anthropic")
+    worker = Worker(
+        db,
+        tmp_path,
+        settings=Settings(groq_api_key="admin-groq", anthropic_api_key="admin-anthropic"),
+        accounts=accounts,
+        key_vault=vault,
+    )
+    job_id = db.create_job(
+        JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4", user_id=user_id
+    )
+
+    settings = worker.settings_for(db.get_job(job_id))
+
+    assert settings.groq_api_key == "personal-groq"
+    assert settings.anthropic_api_key == "personal-anthropic"
 
 
 def _transcript() -> Transcript:

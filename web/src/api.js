@@ -31,6 +31,19 @@ export const revokeUser = (id) =>
   request(`/api/users/${id}/revoke`, { method: "POST" });
 export const disableUser = (id) =>
   request(`/api/users/${id}/disable`, { method: "POST" });
+export const setQuotaUnlimited = (id, unlimited) =>
+  request(`/api/users/${id}/quota`, json({ unlimited }));
+
+export async function saveProviderKeys(groq, anthropic) {
+  const response = await fetch("/api/session/keys", {
+    ...json({ groq, anthropic }),
+    method: "PUT",
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || "could not save provider keys");
+  }
+}
 
 export async function deleteUser(id) {
   const response = await fetch(`/api/users/${id}`, { method: "DELETE" });
@@ -46,6 +59,7 @@ export async function logOut() {
 }
 
 export const listInputs = () => request("/api/inputs");
+export const readDashboard = () => request("/api/dashboard");
 export const listWorkspaces = () => request("/api/workspaces");
 export const getWorkspace = (id) => request(`/api/workspaces/${id}`);
 export const renameWorkspace = (id, title) =>

@@ -18,6 +18,7 @@ services:
       STREETCLIP_LOCAL_WHISPER_MODEL: ${STREETCLIP_LOCAL_WHISPER_MODEL:-small.en}
       STREETCLIP_ADMIN_EMAIL: ${STREETCLIP_ADMIN_EMAIL:-}
       STREETCLIP_ADMIN_PASSWORD: ${STREETCLIP_ADMIN_PASSWORD:-}
+      STREETCLIP_KEY_ENCRYPTION_SECRET: ${STREETCLIP_KEY_ENCRYPTION_SECRET:-}
     volumes:
       # Recordings to pick from. Read-only: the pipeline never writes here.
       - ./input:/input:ro

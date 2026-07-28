@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     # appears to do nothing at all.
     https: bool = False
     open_signup: bool = False
+    # Encrypts non-admin provider keys before they reach SQLite.
+    key_encryption_secret: str = ""
 
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
