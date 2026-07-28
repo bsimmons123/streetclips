@@ -356,14 +356,14 @@ def test_migrate_adds_columns_to_a_genuinely_pre_migration_database(tmp_path: Pa
 
 
 def test_list_workspaces_counts_clips_by_state(db: Database):
-    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4", user_id=1)
     db.replace_clips(job_id, [_candidate(0, 30), _candidate(60, 90), _candidate(120, 150)])
     clips = db.list_clips(job_id)
     db.update_clip(clips[0]["id"], None, None, True)
     db.update_clip(clips[1]["id"], None, None, True)
     db.set_rendered_path(clips[0]["id"], Path("/out/a.mp4"))
 
-    rows = db.list_workspaces()
+    rows = db.list_workspaces(user_id=1)
     assert len(rows) == 1
     assert rows[0]["clip_count"] == 3
     assert rows[0]["kept_count"] == 2
@@ -371,14 +371,14 @@ def test_list_workspaces_counts_clips_by_state(db: Database):
 
 
 def test_list_workspaces_excludes_render_jobs(db: Database):
-    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
-    db.create_job(JobKind.RENDER, Path("1"), "a.mp4")
-    assert [r["kind"] for r in db.list_workspaces()] == ["analyze"]
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4", user_id=1)
+    db.create_job(JobKind.RENDER, Path("1"), "a.mp4", user_id=1)
+    assert [r["kind"] for r in db.list_workspaces(user_id=1)] == ["analyze"]
 
 
 def test_list_workspaces_counts_zero_for_a_fresh_job(db: Database):
-    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
-    assert db.list_workspaces()[0]["clip_count"] == 0
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4", user_id=1)
+    assert db.list_workspaces(user_id=1)[0]["clip_count"] == 0
 
 
 def test_backfill_fills_durations_from_stored_reports(tmp_path):
@@ -419,3 +419,41 @@ def test_backfill_survives_a_malformed_report(tmp_path):
 
     assert db.backfill_durations() == 0
     assert db.get_job(bad)["duration"] == 0.0
+
+
+# --- ownership -----------------------------------------------------------------
+
+
+def test_jobs_carry_an_owner(db: Database):
+    job_id = db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4", user_id=7)
+    assert db.get_job(job_id)["user_id"] == 7
+
+
+def test_list_workspaces_only_returns_your_own(db: Database):
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4", user_id=1)
+    db.create_job(JobKind.ANALYZE, Path("/x/b.mp4"), "b.mp4", user_id=2)
+
+    mine = db.list_workspaces(user_id=1)
+    assert [w["source_name"] for w in mine] == ["a.mp4"]
+
+
+def test_list_workspaces_for_a_user_with_none(db: Database):
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4", user_id=1)
+    assert db.list_workspaces(user_id=99) == []
+
+
+def test_backfill_assigns_ownerless_jobs(db: Database):
+    """Workspaces created before accounts existed become the admin's."""
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4")
+    db.create_job(JobKind.ANALYZE, Path("/x/b.mp4"), "b.mp4")
+
+    assert db.backfill_owner(user_id=1) == 2
+    assert db.list_workspaces(user_id=1)[0]["user_id"] == 1
+    # Idempotent: nothing left without an owner.
+    assert db.backfill_owner(user_id=1) == 0
+
+
+def test_backfill_leaves_owned_jobs_alone(db: Database):
+    db.create_job(JobKind.ANALYZE, Path("/x/a.mp4"), "a.mp4", user_id=5)
+    db.backfill_owner(user_id=1)
+    assert db.list_workspaces(user_id=5)[0]["user_id"] == 5

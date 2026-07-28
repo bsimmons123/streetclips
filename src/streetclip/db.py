@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     title         TEXT,
     duration      REAL NOT NULL DEFAULT 0.0,
     poster_path   TEXT,
+    -- Not a real FK: `users` lives in Accounts' own database file, a
+    -- separate connection this table can't reference. See db.py's migrate().
+    user_id       INTEGER,
     created_at    REAL NOT NULL,
     updated_at    REAL NOT NULL
 );
@@ -107,6 +110,7 @@ class Database:
         ("title", "TEXT"),
         ("duration", "REAL NOT NULL DEFAULT 0.0"),
         ("poster_path", "TEXT"),
+        ("user_id", "INTEGER"),
     )
 
     def migrate(self) -> None:
@@ -119,13 +123,27 @@ class Database:
 
     # --- jobs ----------------------------------------------------------------
 
-    def create_job(self, kind: JobKind, source_path: Path, source_name: str) -> int:
+    def create_job(
+        self,
+        kind: JobKind,
+        source_path: Path,
+        source_name: str,
+        user_id: int | None = None,
+    ) -> int:
         now = time.time()
         with self.connect() as conn:
             cursor = conn.execute(
-                "INSERT INTO jobs (kind, status, source_path, source_name, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (kind.value, JobStatus.QUEUED.value, str(source_path), source_name, now, now),
+                "INSERT INTO jobs (kind, status, source_path, source_name, user_id,"
+                " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    kind.value,
+                    JobStatus.QUEUED.value,
+                    str(source_path),
+                    source_name,
+                    user_id,
+                    now,
+                    now,
+                ),
             )
             return int(cursor.lastrowid)
 
@@ -141,8 +159,8 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def list_workspaces(self, limit: int = 100) -> list[dict[str, Any]]:
-        """Analyze jobs with their clip tallies, newest first.
+    def list_workspaces(self, user_id: int, limit: int = 100) -> list[dict[str, Any]]:
+        """One user's analyze jobs with their clip tallies, newest first.
 
         A LEFT JOIN aggregate rather than stored counters: the numbers change
         on every keep and skip, and at this scale counting is free.
@@ -154,11 +172,19 @@ class Database:
                 " COALESCE(SUM(c.selected), 0) AS kept_count,"
                 " COUNT(c.rendered_path) AS rendered_count"
                 " FROM jobs j LEFT JOIN clips c ON c.job_id = j.id"
-                " WHERE j.kind = ?"
+                " WHERE j.kind = ? AND j.user_id = ?"
                 " GROUP BY j.id ORDER BY j.id DESC LIMIT ?",
-                (JobKind.ANALYZE.value, limit),
+                (JobKind.ANALYZE.value, user_id, limit),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def backfill_owner(self, user_id: int) -> int:
+        """Give ownerless jobs to a user. Returns how many were claimed."""
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "UPDATE jobs SET user_id = ? WHERE user_id IS NULL", (user_id,)
+            )
+            return cursor.rowcount
 
     def claim_next_job(self) -> dict[str, Any] | None:
         """Atomically take the oldest queued job.
