@@ -53,10 +53,28 @@ export const renameWorkspace = (id, title) =>
 export const createWorkspace = (path) => request("/api/workspaces", json({ path }));
 export const renderWorkspace = (id) => request(`/api/workspaces/${id}/render`, { method: "POST" });
 
-export function uploadWorkspace(file) {
-  const form = new FormData();
-  form.append("file", file);
-  return request("/api/workspaces/upload", { method: "POST", body: form });
+export function uploadWorkspace(file, onProgress = () => {}) {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/workspaces/upload");
+    xhr.responseType = "json";
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded / event.total);
+    };
+    xhr.onerror = () => reject(new Error("upload failed"));
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(1);
+        resolve(xhr.response);
+        return;
+      }
+      reject(new Error(xhr.response?.detail || xhr.statusText || "upload failed"));
+    };
+    xhr.send(form);
+  });
 }
 
 export const getTranscript = (id) => request(`/api/workspaces/${id}/transcript`);

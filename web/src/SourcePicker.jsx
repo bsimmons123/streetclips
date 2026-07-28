@@ -6,6 +6,7 @@ export default function SourcePicker({ onStarted, onError }) {
   const [inputs, setInputs] = useState(null);
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
   const fileInput = useRef(null);
 
   useEffect(() => {
@@ -23,11 +24,18 @@ export default function SourcePicker({ onStarted, onError }) {
     }
   }
 
+  function upload(file) {
+    setUploadProgress(0);
+    start(api.uploadWorkspace(file, setUploadProgress)).finally(() =>
+      setUploadProgress(null),
+    );
+  }
+
   function onDrop(event) {
     event.preventDefault();
     setOver(false);
     const file = event.dataTransfer.files[0];
-    if (file) start(api.uploadWorkspace(file));
+    if (file) upload(file);
   }
 
   return (
@@ -85,10 +93,19 @@ export default function SourcePicker({ onStarted, onError }) {
             disabled={busy}
             onChange={(event) => {
               const file = event.target.files[0];
-              if (file) start(api.uploadWorkspace(file));
+              if (file) upload(file);
             }}
           />
-          {busy ? "Uploading…" : "Drop a video here, or click to choose one"}
+          {uploadProgress !== null ? (
+            <span className="upload-status">
+              <span>{Math.round(uploadProgress * 100)}% uploaded</span>
+              <span className="upload-bar" aria-hidden="true">
+                <span style={{ width: `${uploadProgress * 100}%` }} />
+              </span>
+            </span>
+          ) : (
+            "Drop a video here, or click to choose one"
+          )}
         </label>
       </div>
 
