@@ -91,6 +91,16 @@ class Settings(BaseSettings):
     data_dir: str = "./data"
     input_dir: str = "./input"
 
+    # Accounts. The admin is seeded from these at startup; an existing account
+    # with this email is left alone rather than having its password reset.
+    admin_email: str = ""
+    admin_password: str = ""
+    # Set true behind TLS. The session cookie is marked Secure only when this
+    # is on — a Secure cookie over plain HTTP is silently never sent, and login
+    # appears to do nothing at all.
+    https: bool = False
+    open_signup: bool = False
+
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
 
