@@ -1,11 +1,7 @@
 services:
   streetclip:
-    build:
-      context: .
-      args:
-        # Add local-whisper here to transcribe on the box instead of via Groq.
-        EXTRAS: ${STREETCLIP_EXTRAS:-groq,reframe}
-    image: streetclip:latest
+    image: ghcr.io/bsimmons123/streetclips:latest
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "${STREETCLIP_BIND:-8080}:8080"

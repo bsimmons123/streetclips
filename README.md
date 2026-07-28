@@ -24,8 +24,14 @@ downstream stage is testable against a canned transcript with no network.
 cp .env.example .env      # add the admin's provider keys and credentials
 mkdir -p input data
 cp /path/to/recording.mp4 input/
+docker compose pull
 docker compose up -d
 ```
+
+Every push to `master` publishes a fresh `linux/amd64` image to
+`ghcr.io/bsimmons123/streetclips`. Each build receives both the `latest` tag and
+an immutable `sha-<commit>` tag. The workflow can also be run manually from the
+repository's Actions tab.
 
 Open `http://<host>:8080`, pick the recording, wait for the queue to fill, keep
 the clips you want, hit Export.
@@ -50,10 +56,13 @@ Long recordings are split into 10-minute FLAC chunks and stitched back onto one
 timeline, because the hosted upload cap is well below a 2-hour WAV.
 
 `STREETCLIP_TRANSCRIBE_BACKEND=local` uses faster-whisper on the CPU instead —
-free and offline, but slow. It needs the extra installed in the image:
+free and offline, but slow. It needs the extra installed in a locally built
+image:
 
 ```sh
-STREETCLIP_EXTRAS=groq,reframe,local-whisper docker compose build
+docker build \
+  --build-arg EXTRAS=groq,reframe,local-whisper \
+  -t ghcr.io/bsimmons123/streetclips:latest .
 ```
 
 The model downloads on first use into the container's home directory, so it is
