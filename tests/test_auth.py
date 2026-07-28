@@ -3,12 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
 
 from streetclip.accounts import Accounts
 from streetclip.auth import (
+    COOKIE_NAME,
     NoAdminConfigured,
     bootstrap_admin,
     hash_password,
+    make_dependencies,
     verify_password,
 )
 from streetclip.config import Settings
@@ -17,6 +21,25 @@ from streetclip.config import Settings
 @pytest.fixture
 def accounts(tmp_path: Path) -> Accounts:
     return Accounts(tmp_path / "s.db")
+
+
+def _app(accounts: Accounts) -> FastAPI:
+    current_user, approved_user, admin_user = make_dependencies(accounts)
+    app = FastAPI()
+
+    @app.get("/who")
+    def who(user=Depends(current_user)):  # noqa: B008
+        return {"email": user["email"]}
+
+    @app.get("/spend")
+    def spend(user=Depends(approved_user)):  # noqa: B008
+        return {"ok": True}
+
+    @app.get("/admin")
+    def admin(user=Depends(admin_user)):  # noqa: B008
+        return {"ok": True}
+
+    return app
 
 
 def test_hashing_round_trips():
@@ -77,3 +100,61 @@ def test_bootstrap_refuses_when_nothing_is_configured(accounts: Accounts):
 def test_bootstrap_is_a_noop_when_users_already_exist(accounts: Accounts):
     accounts.create_user("someone@x.com", hash_password("x"), is_admin=True, approved=True)
     assert bootstrap_admin(accounts, Settings()) is None
+
+
+def test_no_cookie_is_401(accounts: Accounts):
+    with TestClient(_app(accounts)) as client:
+        assert client.get("/who").status_code == 401
+
+
+def test_a_valid_session_identifies_the_user(accounts: Accounts):
+    user_id = accounts.create_user("a@b.com", hash_password("x"), approved=True)
+    token = accounts.create_session(user_id)
+
+    with TestClient(_app(accounts)) as client:
+        client.cookies.set(COOKIE_NAME, token)
+        assert client.get("/who").json()["email"] == "a@b.com"
+
+
+def test_a_pending_user_is_403_on_resource_routes(accounts: Accounts):
+    """Identity is fine; spending the machine's resources is not."""
+    user_id = accounts.create_user("a@b.com", hash_password("x"))
+    token = accounts.create_session(user_id)
+
+    with TestClient(_app(accounts)) as client:
+        client.cookies.set(COOKIE_NAME, token)
+        assert client.get("/who").status_code == 200
+        assert client.get("/spend").status_code == 403
+
+
+def test_an_approved_user_may_spend(accounts: Accounts):
+    user_id = accounts.create_user("a@b.com", hash_password("x"), approved=True)
+    token = accounts.create_session(user_id)
+
+    with TestClient(_app(accounts)) as client:
+        client.cookies.set(COOKIE_NAME, token)
+        assert client.get("/spend").status_code == 200
+
+
+def test_a_non_admin_is_403_on_admin_routes(accounts: Accounts):
+    user_id = accounts.create_user("a@b.com", hash_password("x"), approved=True)
+    token = accounts.create_session(user_id)
+
+    with TestClient(_app(accounts)) as client:
+        client.cookies.set(COOKIE_NAME, token)
+        assert client.get("/admin").status_code == 403
+
+
+def test_an_admin_passes(accounts: Accounts):
+    user_id = accounts.create_user("a@b.com", hash_password("x"), is_admin=True, approved=True)
+    token = accounts.create_session(user_id)
+
+    with TestClient(_app(accounts)) as client:
+        client.cookies.set(COOKIE_NAME, token)
+        assert client.get("/admin").status_code == 200
+
+
+def test_a_stale_cookie_is_401(accounts: Accounts):
+    with TestClient(_app(accounts)) as client:
+        client.cookies.set(COOKIE_NAME, "long-gone")
+        assert client.get("/who").status_code == 401

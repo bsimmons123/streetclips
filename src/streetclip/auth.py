@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from argon2 import PasswordHasher
 from argon2.exceptions import Argon2Error, VerifyMismatchError
+from fastapi import Cookie, Depends, HTTPException, Response
 
-from streetclip.accounts import Accounts
+from streetclip.accounts import SESSION_TTL, Accounts
 from streetclip.config import Settings
 
 log = logging.getLogger(__name__)
@@ -65,3 +67,43 @@ def bootstrap_admin(accounts: Accounts, settings: Settings) -> int | None:
     )
     log.info("seeded admin account %s", settings.admin_email)
     return user_id
+
+
+def set_session_cookie(response: Response, token: str, settings: Settings) -> None:
+    response.set_cookie(
+        COOKIE_NAME,
+        token,
+        httponly=True,
+        samesite="lax",
+        # Only behind TLS: a Secure cookie on plain HTTP is never sent back,
+        # which looks exactly like a login that silently does nothing.
+        secure=settings.https,
+        max_age=SESSION_TTL,
+        path="/",
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(COOKIE_NAME, path="/")
+
+
+def make_dependencies(accounts: Accounts) -> tuple[Callable, Callable, Callable]:
+    """Build the request dependencies against a live Accounts instance."""
+
+    def current_user(session: str | None = Cookie(default=None, alias=COOKIE_NAME)):
+        user = accounts.resolve_session(session or "")
+        if user is None:
+            raise HTTPException(401, "not signed in")
+        return user
+
+    def approved_user(user=Depends(current_user)):  # noqa: B008
+        if user["approved_at"] is None:
+            raise HTTPException(403, "this account is awaiting approval")
+        return user
+
+    def admin_user(user=Depends(current_user)):  # noqa: B008
+        if not user["is_admin"]:
+            raise HTTPException(403, "admin only")
+        return user
+
+    return current_user, approved_user, admin_user
