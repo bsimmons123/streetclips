@@ -120,6 +120,27 @@ def test_a_non_admin_cannot_list_users(env):
     assert client.get("/api/users").status_code == 403
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "kwargs"),
+    [
+        ("get", "/api/users", {}),
+        ("post", "/api/users", {"json": {"email": "new@x.com", "password": "pw123456"}}),
+        ("post", "/api/users/{user_id}/approve", {}),
+        ("post", "/api/users/{user_id}/revoke", {}),
+        ("post", "/api/users/{user_id}/disable", {}),
+    ],
+)
+def test_every_admin_route_refuses_a_non_admin(env, method, path, kwargs):
+    """A future edit that drops a guard on any admin route must fail loudly."""
+    client, accounts, _ = env
+    target = accounts.create_user("target@x.com", hash_password("pw"), approved=True)
+    accounts.create_user("plain@x.com", hash_password("pw"), approved=True)
+    _login(client, "plain@x.com", "pw")
+
+    response = getattr(client, method)(path.format(user_id=target), **kwargs)
+    assert response.status_code == 403
+
+
 def test_approve_and_revoke(env):
     client, accounts, _ = env
     user_id = accounts.create_user("pending@x.com", hash_password("pw"))
