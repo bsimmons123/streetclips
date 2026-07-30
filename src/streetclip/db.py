@@ -60,6 +60,14 @@ CREATE INDEX IF NOT EXISTS clips_job ON clips(job_id, position);
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(status, id);
 """
 
+# Most API reads do not need report_json, which contains the entire transcript
+# and can be several megabytes. Keep the normal job shape while leaving the
+# blob on disk until a caller explicitly asks for the report.
+JOB_COLUMNS = (
+    "id, kind, status, source_path, source_name, stage, progress, error, "
+    "title, duration, poster_path, user_id, created_at, updated_at"
+)
+
 
 class JobKind(StrEnum):
     ANALYZE = "analyze"
@@ -120,6 +128,12 @@ class Database:
             for name, decl in self.ADDED_COLUMNS:
                 if name not in existing:
                     conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {decl}")
+            # This index references a migrated column, so it must be created
+            # after ALTERs when opening a database from an older release.
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS jobs_user_kind"
+                " ON jobs(user_id, kind, id DESC)"
+            )
 
     # --- jobs ----------------------------------------------------------------
 
@@ -149,13 +163,15 @@ class Database:
 
     def get_job(self, job_id: int) -> dict[str, Any] | None:
         with self.connect() as conn:
-            row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            row = conn.execute(
+                f"SELECT {JOB_COLUMNS} FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
         return dict(row) if row else None
 
     def list_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)
+                f"SELECT {JOB_COLUMNS} FROM jobs ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -163,7 +179,8 @@ class Database:
         """Every job owned by a user, including internal render jobs."""
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM jobs WHERE user_id = ? ORDER BY id", (user_id,)
+                f"SELECT {JOB_COLUMNS} FROM jobs WHERE user_id = ? ORDER BY id",
+                (user_id,),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -175,7 +192,7 @@ class Database:
         """
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT j.*,"
+                f"SELECT {', '.join(f'j.{c.strip()}' for c in JOB_COLUMNS.split(','))},"
                 " COUNT(c.id) AS clip_count,"
                 " COALESCE(SUM(c.selected), 0) AS kept_count,"
                 " COUNT(c.rendered_path) AS rendered_count"
@@ -202,7 +219,8 @@ class Database:
         """
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM jobs WHERE status = ? ORDER BY id LIMIT 1",
+                f"SELECT {JOB_COLUMNS} FROM jobs"
+                " WHERE status = ? ORDER BY id LIMIT 1",
                 (JobStatus.QUEUED.value,),
             ).fetchone()
             if row is None:
@@ -384,7 +402,10 @@ class Database:
         return [dict(r) for r in rows]
 
     def report_for(self, job_id: int) -> dict[str, Any] | None:
-        job = self.get_job(job_id)
-        if not job or not job.get("report_json"):
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT report_json FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+        if not row or not row["report_json"]:
             return None
-        return json.loads(job["report_json"])
+        return json.loads(row["report_json"])

@@ -17,6 +17,10 @@ from typing import Any
 # Sessions are bearer tokens. Thirty days balances not re-authenticating a
 # preacher every week against how long a stolen cookie stays useful.
 SESSION_TTL = 30 * 24 * 3600
+# `last_seen_at` is housekeeping, not request telemetry. Updating it on every
+# API request turns all reads (and every SSE poll) into serialized SQLite
+# writes. One touch per minute retains useful activity information.
+SESSION_TOUCH_INTERVAL = 60.0
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -194,7 +198,9 @@ class Accounts:
             if row is None:
                 return None
             conn.execute(
-                "UPDATE sessions SET last_seen_at = ? WHERE id = ?", (now, session_id)
+                "UPDATE sessions SET last_seen_at = ?"
+                " WHERE id = ? AND last_seen_at < ?",
+                (now, session_id, now - SESSION_TOUCH_INTERVAL),
             )
         return dict(row)
 

@@ -25,6 +25,10 @@ class Settings(BaseSettings):
 
     groq_api_key: str = ""
     groq_model: str = "whisper-large-v3-turbo"
+    # Long recordings are uploaded in independent chunks. A small amount of
+    # concurrency cuts wall time substantially without creating a burst large
+    # enough to overwhelm typical hosted-API rate limits.
+    transcribe_concurrency: int = 3
 
     # Local faster-whisper. int8 keeps CPU-only inference tractable.
     local_whisper_model: str = "small.en"
@@ -39,6 +43,7 @@ class Settings(BaseSettings):
     # Ceiling for one scoring call. The SDK default is 10 minutes, which a
     # high-effort pass over a long chunk can exceed.
     scoring_timeout_seconds: float = 1800.0
+    scoring_concurrency: int = 2
 
     # Chunking. 15 min of speech is well under context limits; the overlap
     # stops a good moment from being cut in half at a chunk seam.

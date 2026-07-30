@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time as _time
 from pathlib import Path
 
 import pytest
@@ -163,7 +162,7 @@ def test_deleting_a_user_removes_their_sessions(accounts: Accounts):
     assert accounts.resolve_session(token) is None
 
 
-def test_resolving_refreshes_last_seen(accounts: Accounts):
+def test_resolving_throttles_last_seen_writes(accounts: Accounts):
     user_id = accounts.create_user("a@b.com", "h")
     token = accounts.create_session(user_id)
     with accounts.connect() as conn:
@@ -171,11 +170,23 @@ def test_resolving_refreshes_last_seen(accounts: Accounts):
             "SELECT last_seen_at FROM sessions WHERE id = ?", (token,)
         ).fetchone()["last_seen_at"]
 
-    _time.sleep(0.01)
+    # A fresh session is resolved without another write.
     accounts.resolve_session(token)
-
     with accounts.connect() as conn:
-        after = conn.execute(
+        unchanged = conn.execute(
             "SELECT last_seen_at FROM sessions WHERE id = ?", (token,)
         ).fetchone()["last_seen_at"]
-    assert after > before
+        conn.execute(
+            "UPDATE sessions SET last_seen_at = ? WHERE id = ?",
+            (before - 61, token),
+        )
+
+    assert unchanged == before
+
+    # Once the housekeeping timestamp is stale, resolving touches it.
+    accounts.resolve_session(token)
+    with accounts.connect() as conn:
+        refreshed = conn.execute(
+            "SELECT last_seen_at FROM sessions WHERE id = ?", (token,)
+        ).fetchone()["last_seen_at"]
+    assert refreshed > before

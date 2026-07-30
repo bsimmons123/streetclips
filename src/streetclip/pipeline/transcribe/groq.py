@@ -8,6 +8,7 @@ onto the source timeline.
 from __future__ import annotations
 
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from streetclip.config import Settings, get_settings
@@ -37,7 +38,15 @@ class GroqTranscriber:
             chunks = ingest.split_audio(
                 audio_path, Path(tmp), CHUNK_SECONDS, settings=self.settings
             )
-            parts = [shift(self._transcribe_one(path), offset) for path, offset in chunks]
+            workers = max(1, min(self.settings.transcribe_concurrency, len(chunks)))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                transcripts = pool.map(self._transcribe_one, (path for path, _ in chunks))
+                # executor.map preserves input order, keeping timeline assembly
+                # deterministic even when later uploads finish first.
+                parts = [
+                    shift(transcript, offset)
+                    for transcript, (_, offset) in zip(transcripts, chunks, strict=True)
+                ]
         return merge(parts)
 
     def _transcribe_one(self, path: Path) -> Transcript:

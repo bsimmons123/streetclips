@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from streetclip.config import Settings, get_settings
@@ -54,9 +55,13 @@ def analyze(
     scorer = scorer or score.Scorer(settings)
 
     proposals = []
-    for i, chunk in enumerate(chunks):
-        proposals.extend(scorer.propose(chunk))
-        progress("scoring", 0.60 + 0.35 * (i + 1) / max(1, len(chunks)))
+    workers = max(1, min(settings.scoring_concurrency, len(chunks)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        # map keeps chunk order stable while allowing independent model calls
+        # to overlap. This is the dominant wall-time win on long recordings.
+        for i, chunk_proposals in enumerate(pool.map(scorer.propose, chunks)):
+            proposals.extend(chunk_proposals)
+            progress("scoring", 0.60 + 0.35 * (i + 1) / max(1, len(chunks)))
 
     found: list[Candidate] = score.to_candidates(proposals, transcript, settings)
     progress("done", 1.0)
