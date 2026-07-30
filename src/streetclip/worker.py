@@ -41,6 +41,7 @@ class Worker:
         self,
         db: Database,
         data_dir: Path,
+        scratch_dir: Path | None = None,
         settings: Settings | None = None,
         accounts: Accounts | None = None,
         key_vault: ProviderKeyVault | None = None,
@@ -48,6 +49,7 @@ class Worker:
     ) -> None:
         self.db = db
         self.data_dir = data_dir
+        self.scratch_dir = scratch_dir or data_dir
         self.settings = settings or get_settings()
         self.accounts = accounts
         self.key_vault = key_vault
@@ -99,6 +101,9 @@ class Worker:
     def job_dir(self, job_id: int) -> Path:
         return workspaces.job_dir(self.data_dir, job_id)
 
+    def work_dir(self, job_id: int) -> Path:
+        return workspaces.job_dir(self.scratch_dir, job_id) / "work"
+
     def settings_for(self, job: dict) -> Settings:
         if self.accounts is None or self.key_vault is None or job["user_id"] is None:
             return self.settings
@@ -119,7 +124,7 @@ class Worker:
 
         report = run.analyze(
             Path(job["source_path"]),
-            work_dir=self.job_dir(job_id) / "work",
+            work_dir=self.work_dir(job_id),
             settings=job_settings,
             progress=progress,
         )
@@ -143,7 +148,7 @@ class Worker:
         self.db.set_media(job_id, report.media.duration, poster)
         self.db.finish_job(job_id, report.model_dump_json())
 
-        freed = workspaces.purge_intermediates(self.data_dir, job_id)
+        freed = workspaces.purge_intermediates(self.scratch_dir, job_id)
         log.info("job %s freed %.0f MB of intermediates", job_id, freed / 1e6)
 
     def _render(self, job: dict) -> None:
@@ -172,7 +177,7 @@ class Worker:
         written = run.render_shorts(
             report,
             out_dir=out_dir,
-            work_dir=self.job_dir(analyze_job_id) / "work",
+            work_dir=self.work_dir(analyze_job_id),
             burn_captions=self.settings.render_captions,
             track_speaker=self.settings.render_track_speaker,
             settings=self.settings,
@@ -183,6 +188,8 @@ class Worker:
             self.db.set_rendered_path(row["id"], path)
 
         self.db.finish_job(job_id)
+        if self.scratch_dir != self.data_dir:
+            workspaces.delete_workspace(self.scratch_dir, analyze_job_id)
 
 
 def enqueue_render(db: Database, analyze_job_id: int) -> int:

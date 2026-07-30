@@ -15,9 +15,27 @@ services:
       STREETCLIP_ADMIN_EMAIL: ${STREETCLIP_ADMIN_EMAIL:-}
       STREETCLIP_ADMIN_PASSWORD: ${STREETCLIP_ADMIN_PASSWORD:-}
       STREETCLIP_KEY_ENCRYPTION_SECRET: ${STREETCLIP_KEY_ENCRYPTION_SECRET:-}
+      # Container paths are fixed; host paths below decide which storage tier
+      # backs each one.
+      STREETCLIP_DATA_DIR: /data
+      STREETCLIP_DATABASE_PATH: /state/streetclip.db
+      STREETCLIP_SCRATCH_DIR: /scratch
+      STREETCLIP_INPUT_DIR: /input
     volumes:
-      # Recordings to pick from. Read-only: the pipeline never writes here.
-      - ./input:/input:ro
-      # Job database, working files, and rendered shorts. Bind-mounted so the
-      # exports are reachable on the host without going through the browser.
-      - ./data:/data
+      # Durable media may live on NFS.
+      - type: bind
+        source: ${STREETCLIP_INPUT_HOST_PATH:-./input}
+        target: /input
+        read_only: true
+      - type: bind
+        source: ${STREETCLIP_DATA_HOST_PATH:-./data}
+        target: /data
+      # Keep these two host paths on local SSD, never NFS.
+      - type: bind
+        # ./data preserves upgrades from the original layout. Production NFS
+        # installs should explicitly set this to a local-SSD directory.
+        source: ${STREETCLIP_DATABASE_HOST_PATH:-./data}
+        target: /state
+      - type: bind
+        source: ${STREETCLIP_SCRATCH_HOST_PATH:-./scratch}
+        target: /scratch

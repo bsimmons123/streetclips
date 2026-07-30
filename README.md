@@ -38,47 +38,83 @@ the clips you want, hit Export.
 
 Approved non-admin accounts configure their own Groq and Anthropic keys in the
 UI. Those credentials are encrypted with the configured key-encryption secret,
-or a protected installation secret created inside `data/` when it is blank.
+or a protected installation secret created beside the database when it is blank.
 Back up that secret with the database. Non-admin source uploads are limited to
 15 GiB unless an admin grants an unlimited-storage override.
 
 - `./input` is mounted read-only and is the only directory a job may be
   submitted from by path. Uploads through the browser land in `./data/uploads`.
-- `./data` holds the job database, working files, and rendered shorts, so
-  exports are reachable on the host at
+- `./data` holds durable uploads, posters, and rendered shorts, so exports are
+  reachable on the host at
   `data/job_00001/shorts/01_confrontation_*.mp4` without going through the UI.
+- `./data/streetclip.db` remains the default database location for upgrade
+  compatibility. Set `STREETCLIP_DATABASE_HOST_PATH` to local SSD in production.
+- `./scratch` holds disposable audio and render intermediates.
+
+### NFS production storage
+
+Do not put SQLite or scratch files on NFS. Keep those latency-sensitive paths
+on the container host and use NFS only for durable media:
+
+```env
+STREETCLIP_INPUT_HOST_PATH=/mnt/nfs/streetclip/input
+STREETCLIP_DATA_HOST_PATH=/mnt/nfs/streetclip/data
+STREETCLIP_DATABASE_HOST_PATH=/var/lib/streetclip
+STREETCLIP_SCRATCH_HOST_PATH=/var/cache/streetclip
+```
+
+For an existing installation, stop Street Clips before moving the database and
+its generated encryption secret:
+
+```sh
+docker compose down
+sudo install -d -o 10001 -g 10001 /var/lib/streetclip /var/cache/streetclip
+sudo cp -a /mnt/nfs/streetclip/data/streetclip.db* /var/lib/streetclip/
+sudo cp -a /mnt/nfs/streetclip/data/.provider-key-secret /var/lib/streetclip/ 2>/dev/null || true
+sudo chown -R 10001:10001 /var/lib/streetclip /var/cache/streetclip
+docker compose up -d
+```
+
+Do not run the old and new database copies simultaneously. After confirming
+all accounts and workspaces appear, retain the NFS copy as a backup or archive
+it. SQLite itself cautions that network filesystems add latency and may provide
+unreliable locking.
 
 ### Linux bind-mount permissions
 
 The container runs as the unprivileged user with UID `10001`. If Docker creates
-`./data` as root, including on Alpine Linux hosts, startup fails with
+the bind-mount directories as root, startup fails with
 `sqlite3.OperationalError: unable to open database file`. Stop the service and
-give the container user ownership of the data directory:
+give the container user ownership:
 
 ```sh
 docker compose down
-mkdir -p data input
-sudo chown -R 10001:10001 data
-sudo chmod -R u+rwX data
+mkdir -p data input scratch
+sudo chown -R 10001:10001 data scratch
+sudo chmod -R u+rwX data scratch
 docker compose up -d
 ```
 
-To avoid host bind-mount permissions entirely, replace `./data:/data` with a
-Docker-managed volume:
+To avoid host bind-mount permissions, use Docker-managed volumes for database
+state and scratch while leaving durable exports bind-mounted:
 
 ```yaml
 services:
   streetclip:
     volumes:
-      - ./input:/input:ro
-      - streetclip-data:/data
+      - type: volume
+        source: streetclip-state
+        target: /state
+      - type: volume
+        source: streetclip-scratch
+        target: /scratch
 
 volumes:
-  streetclip-data:
+  streetclip-state:
+  streetclip-scratch:
 ```
 
-The managed-volume option makes exports less convenient to access directly from
-the host.
+Back up the state volume; the scratch volume is disposable.
 
 ### Transcription backend
 
@@ -137,8 +173,8 @@ are detected and used as-is, model file or not.
 **There is no authentication.** Keep it on the LAN, or put it behind Tailscale or
 an authenticating reverse proxy. Do not port-forward it.
 
-Back up `data/streetclip.db` if job history matters; the shorts themselves are
-reproducible from the source and the stored report.
+Back up `/state/streetclip.db` and `/state/.provider-key-secret` if job history
+matters; the shorts themselves are reproducible from the source and stored report.
 
 ## Running without Docker
 

@@ -103,18 +103,31 @@ def create_app(
     settings = settings or get_settings()
     data_dir = data_dir or Path(settings.data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
+    database_path = (
+        Path(settings.database_path)
+        if settings.database_path
+        else data_dir / "streetclip.db"
+    )
+    scratch_dir = Path(settings.scratch_dir) if settings.scratch_dir else data_dir
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    scratch_dir.mkdir(parents=True, exist_ok=True)
 
-    db = Database(data_dir / "streetclip.db")
+    db = Database(database_path)
     input_dir = Path(settings.input_dir)
 
-    accounts = Accounts(data_dir / "streetclip.db")
+    accounts = Accounts(database_path)
     key_vault = ProviderKeyVault(
         accounts,
         settings.key_encryption_secret,
-        data_dir / ".provider-key-secret",
+        database_path.parent / ".provider-key-secret",
     )
     worker = Worker(
-        db, data_dir, settings=settings, accounts=accounts, key_vault=key_vault
+        db,
+        data_dir,
+        scratch_dir=scratch_dir,
+        settings=settings,
+        accounts=accounts,
+        key_vault=key_vault,
     )
     # Captured before bootstrap_admin runs: it is the only reliable signal
     # that this boot is the one creating the very first account. On every
@@ -162,6 +175,8 @@ def create_app(
         shared = workspaces_fs.source_is_shared(source, db.all_source_paths())
         db.delete_job(job["id"])
         workspaces_fs.delete_workspace(data_dir, job["id"])
+        if scratch_dir != data_dir:
+            workspaces_fs.delete_workspace(scratch_dir, job["id"])
         if not shared and _within(source, data_dir / "uploads") and source.is_file():
             source.unlink()
 
@@ -183,6 +198,8 @@ def create_app(
     app.state.worker = worker
     app.state.settings = settings
     app.state.data_dir = data_dir
+    app.state.database_path = database_path
+    app.state.scratch_dir = scratch_dir
 
     app.include_router(
         build_auth_router(accounts, settings, _delete_user_data, key_vault)

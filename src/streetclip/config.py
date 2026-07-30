@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
     data_dir: str = "./data"
+    # Keep SQLite and disposable processing files on local storage when
+    # data_dir is an NFS mount. Blank values preserve the original single-dir
+    # layout for local development and existing installations.
+    database_path: str = ""
+    scratch_dir: str = ""
     input_dir: str = "./input"
 
     # Accounts. The admin is seeded from these at startup; an existing account

@@ -49,19 +49,21 @@ ADD --chmod=644 \
 
 RUN useradd --system --create-home --uid 10001 streetclip \
     && chmod 755 /opt/streetclip \
-    && mkdir -p /data /input \
-    && chown streetclip:streetclip /data /input
+    && mkdir -p /data /input /state /scratch \
+    && chown streetclip:streetclip /data /input /state /scratch
 
 ENV PYTHONUNBUFFERED=1 \
     STREETCLIP_HOST=0.0.0.0 \
     STREETCLIP_PORT=8080 \
     STREETCLIP_DATA_DIR=/data \
+    STREETCLIP_DATABASE_PATH=/state/streetclip.db \
+    STREETCLIP_SCRATCH_DIR=/scratch \
     STREETCLIP_INPUT_DIR=/input \
     STREETCLIP_FACE_MODEL_PATH=/opt/streetclip/blaze_face_short_range.tflite
 
 USER streetclip
 EXPOSE 8080
-VOLUME ["/data"]
+VOLUME ["/data", "/state", "/scratch"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/')"

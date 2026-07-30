@@ -61,6 +61,18 @@ def test_non_admin_jobs_use_personal_provider_keys(tmp_path: Path):
     assert settings.anthropic_api_key == "personal-anthropic"
 
 
+def test_worker_uses_separate_scratch_directory(db: Database, tmp_path: Path):
+    worker = Worker(
+        db,
+        tmp_path / "durable",
+        scratch_dir=tmp_path / "local-scratch",
+        settings=_settings(),
+    )
+
+    assert worker.job_dir(7) == tmp_path / "durable" / "job_00007"
+    assert worker.work_dir(7) == tmp_path / "local-scratch" / "job_00007" / "work"
+
+
 def _transcript() -> Transcript:
     return Transcript(
         duration=10.0,

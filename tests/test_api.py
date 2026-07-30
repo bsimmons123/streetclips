@@ -774,3 +774,26 @@ def test_poster_is_served_when_present(env):
     response = client.get(f"/api/workspaces/{job_id}/poster")
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/jpeg"
+
+
+def test_database_and_scratch_can_be_separate_from_durable_data(tmp_path: Path):
+    data_dir = tmp_path / "nfs-data"
+    database_path = tmp_path / "local-state" / "streetclip.db"
+    scratch_dir = tmp_path / "local-scratch"
+    settings = Settings(
+        data_dir=str(data_dir),
+        database_path=str(database_path),
+        scratch_dir=str(scratch_dir),
+        input_dir=str(tmp_path / "input"),
+        admin_email="admin@x.com",
+        admin_password="adminpw",
+        key_encryption_secret="test-secret",
+    )
+
+    app = create_app(settings, start_worker=False)
+
+    assert app.state.data_dir == data_dir
+    assert app.state.database_path == database_path
+    assert app.state.scratch_dir == scratch_dir
+    assert database_path.is_file()
+    assert not (data_dir / "streetclip.db").exists()
