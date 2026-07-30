@@ -8,7 +8,7 @@ const METRICS = [
   ["exports", "Exports created"],
 ];
 
-export default function Dashboard({ onError, onNew, onWorkspaces }) {
+export default function Dashboard({ onError, canCreate, onNew, onWorkspaces }) {
   const [metrics, setMetrics] = useState(null);
 
   const refresh = useCallback(() => {
@@ -23,13 +23,15 @@ export default function Dashboard({ onError, onNew, onWorkspaces }) {
     <main className="home dashboard">
       <header className="hero">
         <div>
-          <p className="eyebrow">Admin dashboard</p>
+          <p className="eyebrow">Your account</p>
           <h1>Your processing overview</h1>
           <p>Track incoming recordings and move quickly into your next review.</p>
         </div>
-        <button className="btn primary" onClick={onNew}>
-          Upload a recording
-        </button>
+        {canCreate && (
+          <button className="btn primary" onClick={onNew}>
+            Upload a recording
+          </button>
+        )}
       </header>
 
       <section className="metric-grid" aria-label="Processing totals">

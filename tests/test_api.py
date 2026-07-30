@@ -257,7 +257,37 @@ def test_admin_dashboard_counts_uploads_and_processing(env):
         "processing": 1,
         "failed": 0,
         "exports": 0,
+        "processing_minutes": 0.0,
     }
+
+
+def test_regular_user_can_read_their_dashboard_but_not_admin_usage(env):
+    client, db, input_dir, _, accounts = env
+    member = accounts.create_user("member@x.com", hash_password("password"), approved=True)
+    db.create_job(JobKind.ANALYZE, input_dir / "member.mp4", "member.mp4", user_id=member)
+    client.cookies.set(COOKIE_NAME, accounts.create_session(member))
+
+    response = client.get("/api/dashboard")
+
+    assert response.status_code == 200
+    assert response.json()["workspaces"] == 1
+    assert client.get("/api/admin/dashboard").status_code == 403
+
+
+def test_admin_usage_dashboard_aggregates_each_account(env):
+    client, db, input_dir, user_id, accounts = env
+    member = accounts.create_user("member@x.com", hash_password("password"), approved=True)
+    db.create_job(JobKind.ANALYZE, input_dir / "admin.mp4", "admin.mp4", user_id=user_id)
+    db.create_job(JobKind.ANALYZE, input_dir / "member.mp4", "member.mp4", user_id=member)
+
+    response = client.get("/api/admin/dashboard")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["accounts"] >= 2
+    assert body["workspaces"] == 2
+    assert {row["email"] for row in body["users"]} >= {"me@x.com", "member@x.com"}
+    assert body["billing"]["configured"] is False
 
 
 def test_a_pending_user_can_still_read(env):

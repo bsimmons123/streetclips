@@ -227,11 +227,10 @@ def create_app(
         """Analyze jobs with their clip tallies. Render jobs stay internal."""
         return [workspace_payload(w) for w in db.list_workspaces(user["id"])]
 
-    @app.get("/api/dashboard")
-    def dashboard(admin=Depends(admin_user)) -> dict[str, int]:
-        jobs = db.list_jobs_for_user(admin["id"])
+    def _dashboard_for(user_id: int) -> dict[str, int | float]:
+        jobs = db.list_jobs_for_user(user_id)
         analyses = [job for job in jobs if job["kind"] == JobKind.ANALYZE]
-        uploads_dir = data_dir / "uploads" / str(admin["id"])
+        uploads_dir = data_dir / "uploads" / str(user_id)
         uploaded = [
             job for job in analyses if _within(Path(job["source_path"]), uploads_dir)
         ]
@@ -245,6 +244,51 @@ def create_app(
             ),
             "failed": sum(job["status"] == JobStatus.FAILED for job in analyses),
             "exports": sum(job["kind"] == JobKind.RENDER for job in jobs),
+            "processing_minutes": round(
+                sum(float(job["duration"] or 0) for job in analyses) / 60, 1
+            ),
+        }
+
+    @app.get("/api/dashboard")
+    def dashboard(user=Depends(current_user)) -> dict[str, int | float]:
+        """General account overview; every signed-in user sees only their own data."""
+        return _dashboard_for(user["id"])
+
+    @app.get("/api/admin/dashboard")
+    def admin_dashboard(admin=Depends(admin_user)) -> dict[str, Any]:
+        """Platform-wide operational usage. Billing stays unavailable until connected."""
+        users = accounts.list_users()
+        rows = []
+        for user in users:
+            usage = _dashboard_for(user["id"])
+            uploads_dir = data_dir / "uploads" / str(user["id"])
+            storage_bytes = sum(
+                path.stat().st_size
+                for path in uploads_dir.rglob("*")
+                if path.is_file()
+            ) if uploads_dir.exists() else 0
+            rows.append({
+                "id": user["id"],
+                "email": user["email"],
+                "approved": user["approved_at"] is not None,
+                "disabled": user["disabled_at"] is not None,
+                "quota_unlimited": bool(user.get("quota_unlimited")),
+                "storage_bytes": storage_bytes,
+                **usage,
+            })
+
+        return {
+            "accounts": len(rows),
+            "active_accounts": sum(r["approved"] and not r["disabled"] for r in rows),
+            "workspaces": sum(r["workspaces"] for r in rows),
+            "processing_minutes": round(sum(r["processing_minutes"] for r in rows), 1),
+            "storage_bytes": sum(r["storage_bytes"] for r in rows),
+            "users": rows,
+            "billing": {
+                "configured": False,
+                "provider": None,
+                "message": "No billing provider is connected.",
+            },
         }
 
     @app.patch("/api/workspaces/{job_id}")

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "./api";
+import AdminDashboard from "./AdminDashboard";
 import Dashboard from "./Dashboard";
 import Login from "./Login";
 import Pending from "./Pending";
@@ -64,7 +65,7 @@ export default function App() {
   }, [refreshSession]);
 
   useEffect(() => {
-    if (session?.is_admin) setPage("dashboard");
+    if (session?.id) setPage("dashboard");
   }, [session?.id, session?.is_admin]);
 
   const refresh = useCallback(() => {
@@ -159,17 +160,6 @@ export default function App() {
       <Pending email={session.email} onRefresh={refreshSession} onSignOut={signOut} />
     );
   }
-  if (!session.is_admin && !session.keys_configured) {
-    return (
-      <ProviderKeys
-        configured={false}
-        onError={fail}
-        onSaved={refreshSession}
-        onSignOut={signOut}
-      />
-    );
-  }
-
   let body;
   if (page === "keys" && !session.is_admin) {
     body = (
@@ -181,10 +171,11 @@ export default function App() {
         onSignOut={signOut}
       />
     );
-  } else if (page === "dashboard" && session.is_admin) {
+  } else if (page === "dashboard") {
     body = (
       <Dashboard
         onError={fail}
+        canCreate={session.is_admin || session.keys_configured}
         onNew={() => {
           setPage("workspaces");
           setPicking(true);
@@ -192,6 +183,8 @@ export default function App() {
         onWorkspaces={() => setPage("workspaces")}
       />
     );
+  } else if (page === "admin" && session.is_admin) {
+    body = <AdminDashboard onError={fail} />;
   } else if (page === "users" && session.is_admin) {
     body = <Users currentUserId={session.id} onError={fail} />;
   } else if (jobId === null && picking) {
@@ -241,14 +234,13 @@ export default function App() {
           className="wordmark"
           onClick={() => {
             back();
-            setPage(session.is_admin ? "dashboard" : "workspaces");
+            setPage("dashboard");
           }}
         >
           street<span>clip</span>
         </button>
         {job && <span className="source">{job.title || job.source_name}</span>}
-        {session.is_admin && (
-          <nav className="main-nav" aria-label="Main navigation">
+        <nav className="main-nav" aria-label="Main navigation">
             <button
               className={page === "dashboard" ? "active" : ""}
               onClick={() => {
@@ -267,33 +259,37 @@ export default function App() {
             >
               Workspaces
             </button>
-            <button
-              className={page === "users" ? "active" : ""}
-              onClick={() => {
-                back();
-                setPage("users");
-              }}
-            >
-              Accounts
-            </button>
-          </nav>
-        )}
-        {!session.is_admin && (
-          <nav className="main-nav" aria-label="Main navigation">
-            <button
-              className={page === "workspaces" ? "active" : ""}
-              onClick={() => setPage("workspaces")}
-            >
-              Workspaces
-            </button>
-            <button
-              className={page === "keys" ? "active" : ""}
-              onClick={() => setPage("keys")}
-            >
-              API keys
-            </button>
-          </nav>
-        )}
+            {!session.is_admin && (
+              <button
+                className={page === "keys" ? "active" : ""}
+                onClick={() => setPage("keys")}
+              >
+                API keys
+              </button>
+            )}
+            {session.is_admin && (
+              <button
+                className={page === "admin" ? "active" : ""}
+                onClick={() => {
+                  back();
+                  setPage("admin");
+                }}
+              >
+                Admin
+              </button>
+            )}
+            {session.is_admin && (
+              <button
+                className={page === "users" ? "active" : ""}
+                onClick={() => {
+                  back();
+                  setPage("users");
+                }}
+              >
+                Accounts
+              </button>
+            )}
+        </nav>
         <span className="spacer" />
         <span className="source account-email">{session.email}</span>
         <button className="btn ghost" onClick={signOut}>

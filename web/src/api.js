@@ -60,6 +60,7 @@ export async function logOut() {
 
 export const listInputs = () => request("/api/inputs");
 export const readDashboard = () => request("/api/dashboard");
+export const readAdminDashboard = () => request("/api/admin/dashboard");
 export const listWorkspaces = () => request("/api/workspaces");
 export const getWorkspace = (id) => request(`/api/workspaces/${id}`);
 export const renameWorkspace = (id, title) =>
